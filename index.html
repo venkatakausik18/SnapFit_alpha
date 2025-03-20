@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual Try-On Experience</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .form-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #loading {
+            text-align: center;
+            color: #666;
+            margin: 10px 0;
+        }
+        #result {
+            text-align: center;
+        }
+        #result-image {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Virtual Try-On Experience</h1>
+    <div class="form-container">
+        <form id="tryon-form">
+            <label for="model-image">Upload Model Image:</label>
+            <input type="file" id="model-image" accept="image/*" required>
+            
+            <label for="garment-image">Upload Garment Image:</label>
+            <input type="file" id="garment-image" accept="image/*" required>
+            
+            <button type="submit">Try On Now</button>
+        </form>
+        <div id="loading" style="display: none;">Processing your try-on... Please wait.</div>
+    </div>
+    <div id="result">
+        <h2>Your Try-On Result:</h2>
+        <img id="result-image" src="" alt="Generated Try-On Image">
+    </div>
+
+    <script>
+        document.getElementById('tryon-form').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            
+            const modelImage = document.getElementById('model-image').files[0];
+            const garmentImage = document.getElementById('garment-image').files[0];
+            
+            if (!modelImage || !garmentImage) {
+                alert('Please upload both a model image and a garment image.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('model_image', modelImage);
+            formData.append('garment_image', garmentImage);
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('result-image').src = '';
+            
+            try {
+                const response = await fetch('/try-on/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to generate try-on image.');
+                }
+                
+                const blob = await response.blob();
+                const imageUrl = URL.createObjectURL(blob);
+                document.getElementById('result-image').src = imageUrl;
+            } catch (error) {
+                console.error('Error:', error);
+                alert('An error occurred. Please try again.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
