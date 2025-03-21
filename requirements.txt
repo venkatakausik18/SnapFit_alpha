@@ -113,7 +113,6 @@ supervision==0.23.0
 sympy==1.13.1
 tokenizers==0.19.1
 tomlkit==0.12.0
-torch==2.5.1+cu124
 torchao==0.8.0
 torchaudio==2.5.1+cu124
 torchvision==0.20.1+cu124
