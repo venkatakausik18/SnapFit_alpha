@@ -13,6 +13,7 @@ from src.pipeline_tryon import FluxTryonPipeline
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddlewarex
 from PIL import Image
 import numpy as np
 import torch
@@ -26,6 +27,14 @@ app = FastAPI()
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 import os
 from huggingface_hub import login
