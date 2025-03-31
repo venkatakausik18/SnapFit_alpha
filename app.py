@@ -13,7 +13,7 @@ from src.pipeline_tryon import FluxTryonPipeline
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddlewarex
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import numpy as np
 import torch
