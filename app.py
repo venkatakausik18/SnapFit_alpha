@@ -145,4 +145,4 @@ async def try_on(model_image: UploadFile = File(...), garment_image: UploadFile 
     # Save temporarily and return
     output_path = "generated_image.png"
     output_image.save(output_path)
-    return FileResponse(output_path)
+    return FileResponse(output_path , media_type="image/png")
