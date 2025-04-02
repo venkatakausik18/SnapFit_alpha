@@ -4,38 +4,9 @@ from PIL import Image
 import os
 import base64
 import io
-import runpod
-from pydantic import BaseModel
-from diffusers import FluxTransformer2DModel, FluxPipeline, AutoencoderKL
-from transformers import T5EncoderModel, CLIPTextModel
-from src.pipeline_tryon import FluxTryonPipeline
-
-# -*- coding: utf-8 -*-
-from fastapi import FastAPI, UploadFile, File , HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-import numpy as np
-import torch
-from io import BytesIO
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
-
-class ImageRequest(BaseModel):
-    user_image: str  # Base64 encoded string
-    garment_image: str  # Base64 encoded string
-
-import os
-from huggingface_hub import login
-
-# Retrieve the token from the environment variable
-token = os.environ.get("HUGGING_FACE_HUB_TOKEN")
-if token:
-    login(token)
-else:
-    print("Warning: HUGGING_FACE_HUB_TOKEN not set. Some models may require authentication.")
 
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,7 +14,7 @@ torch_dtype = torch.bfloat16
 
 def load_models(device=device, torch_dtype=torch_dtype):
     bfl_repo = "black-forest-labs/FLUX.1-dev"
-    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype,use_auth_token=True)
+    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
     text_encoder_2 = T5EncoderModel.from_pretrained(bfl_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
     transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer", torch_dtype=torch_dtype)
     vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae")
@@ -147,5 +118,31 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         
         return {"output_image": output_base64}
     except Exception as e:
-        # You can either raise an exception or return an error message
         raise Exception(f"Error processing images: {str(e)}")
+
+# Main block to handle file inputs
+if __name__ == "__main__":
+    # Specify your input and output file paths here
+    user_image_path = "path/to/your/user_image.png"  # Replace with your actual user image path
+    garment_image_path = "path/to/your/garment_image.png"  # Replace with your actual garment image path
+    output_path = "path/to/your/output_image.png"  # Replace with your desired output path
+
+    try:
+        # Read the image files and convert to base64
+        with open(user_image_path, "rb") as f:
+            user_image_base64 = base64.b64encode(f.read()).decode("utf-8")
+        with open(garment_image_path, "rb") as f:
+            garment_image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+        # Call the existing function with base64 inputs
+        result = process_images_standalone(user_image_base64, garment_image_base64)
+
+        # Decode the output base64 and save to file
+        output_bytes = base64.b64decode(result["output_image"])
+        with open(output_path, "wb") as f:
+            f.write(output_bytes)
+        print(f"Success! Output saved to {output_path}")
+    except FileNotFoundError as e:
+        print(f"File not found: {str(e)}")
+    except Exception as e:
+        print(f"Error: {str(e)}")
