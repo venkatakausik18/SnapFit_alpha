@@ -10,7 +10,7 @@ from transformers import T5EncoderModel, CLIPTextModel
 from src.pipeline_tryon import FluxTryonPipeline
 
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File , HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class ImageRequest(BaseModel):
+    user_image: str  # Base64 encoded string
+    garment_image: str  # Base64 encoded string
 
 import os
 from huggingface_hub import login
@@ -128,21 +132,27 @@ async def read_root():
 
 # Endpoint for virtual try-on
 @app.post("/try-on/")
-async def try_on(model_image: UploadFile = File(...), garment_image: UploadFile = File(...)):
-    # Read and process model image
-    model_image_data = await model_image.read()
-    model_image = Image.open(BytesIO(model_image_data))
-    model_image = np.array(model_image)
-    
-    # Read and process garment image
-    garment_image_data = await garment_image.read()
-    garment_image = Image.open(BytesIO(garment_image_data))
-    garment_image = np.array(garment_image)
-    
-    # Generate the try-on image
-    output_image = generate_image(model_image=model_image, garment_image=garment_image)
-    
-    # Save temporarily and return
-    output_path = "generated_image.png"
-    output_image.save(output_path)
-    return FileResponse(output_path , media_type="image/png")
+async def process_images(request: ImageRequest):
+    try:
+        # Decode Base64 strings to images
+        user_image_data = base64.b64decode(request.user_image)
+        garment_image_data = base64.b64decode(request.garment_image)
+        
+        user_img = Image.open(io.BytesIO(user_image_data)).convert("RGBA")
+        garment_img = Image.open(io.BytesIO(garment_image_data)).convert("RGBA")
+        
+        # Convert to NumPy arrays
+        user_img_np = np.array(user_img)
+        garment_img_np = np.array(garment_img)
+        
+        # Generate the try-on image
+        output_image = generate_image(model_image=user_img_np, garment_image=garment_img_np)
+        
+        # Convert output image to Base64
+        output_buffer = io.BytesIO()
+        output_image.save(output_buffer, format="PNG")
+        output_base64 = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
+        
+        return {"output_image": output_base64}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
