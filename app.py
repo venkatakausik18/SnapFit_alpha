@@ -5,6 +5,7 @@ import os
 import base64
 import io
 import runpod
+from pydantic import BaseModel
 from diffusers import FluxTransformer2DModel, FluxPipeline, AutoencoderKL
 from transformers import T5EncoderModel, CLIPTextModel
 from src.pipeline_tryon import FluxTryonPipeline
