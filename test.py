@@ -136,11 +136,14 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
 # Main block to handle file inputs
 if __name__ == "__main__":
     # Specify your input and output file paths here
-    user_image_path = "asset/images/model/model1.png"  # Replace with your actual user image path
-    garment_image_path = "asset/images/garment/garment1.jpg"  # Replace with your actual garment image path
-    output_path = "asset/images/model/model1.png"  # Replace with your desired output path
+    user_image_path = "asset/images/model/model1.png"
+    garment_image_path = "asset/images/garment/garment1.jpg"
+    output_path = "results/output_model1.png"  # Updated to save in 'results' folder
 
     try:
+        # Create the 'results' folder if it doesn't exist
+        os.makedirs("results", exist_ok=True)
+
         # Read the image files and convert to base64
         with open(user_image_path, "rb") as f:
             user_image_base64 = base64.b64encode(f.read()).decode("utf-8")
