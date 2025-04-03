@@ -5,6 +5,7 @@ import base64
 import io
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
@@ -12,6 +13,13 @@ from diffusers import FluxTransformer2DModel, AutoencoderKL
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.bfloat16
