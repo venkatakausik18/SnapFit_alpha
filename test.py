@@ -47,16 +47,28 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     width = width - (width % 16)
     height = height - (height % 16)
     
+    # Blank image with 3 channels (RGB)
     concat_image_list = [np.zeros((height, width, 3), dtype=np.uint8)]
     has_model_image = model_image is not None
     has_garment_image = garment_image is not None
+    
     if has_model_image:
+        # Convert RGBA to RGB if necessary
+        if model_image.shape[-1] == 4:  # Check if 4 channels (RGBA)
+            model_image = Image.fromarray(model_image, mode="RGBA").convert("RGB")
+            model_image = np.array(model_image)
         model_image = resize_by_height(model_image, height)
         concat_image_list.append(model_image)
+    
     if has_garment_image:
+        # Convert RGBA to RGB if necessary
+        if garment_image.shape[-1] == 4:  # Check if 4 channels (RGBA)
+            garment_image = Image.fromarray(garment_image, mode="RGBA").convert("RGB")
+            garment_image = np.array(garment_image)
         garment_image = resize_by_height(garment_image, height)
         concat_image_list.append(garment_image)
     
+    # Concatenate all RGB images
     image = np.concatenate([np.array(img) for img in concat_image_list], axis=1)
     image = Image.fromarray(image)
     
@@ -101,6 +113,7 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         user_image_data = base64.b64decode(user_image_base64)
         garment_image_data = base64.b64decode(garment_image_base64)
         
+        # Load images as RGBA, then convert to NumPy arrays
         user_img = Image.open(io.BytesIO(user_image_data)).convert("RGBA")
         garment_img = Image.open(io.BytesIO(garment_image_data)).convert("RGBA")
         
