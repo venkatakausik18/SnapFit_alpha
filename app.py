@@ -1,63 +1,25 @@
 import torch
 import numpy as np
 from PIL import Image
-import os
 import base64
 import io
-import runpod
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from diffusers import FluxTransformer2DModel, FluxPipeline, AutoencoderKL
-from transformers import T5EncoderModel, CLIPTextModel
-from src.pipeline_tryon import FluxTryonPipeline
-
-# -*- coding: utf-8 -*-
-from fastapi import FastAPI, UploadFile, File , HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-import numpy as np
-import torch
-from io import BytesIO
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
 
 # Initialize FastAPI app
-app = FastAPI()
-
-# Mount static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class ImageRequest(BaseModel):
-    user_image: str  # Base64 encoded string
-    garment_image: str  # Base64 encoded string
-
-import os
-from huggingface_hub import login
-
-# Retrieve the token from the environment variable
-token = os.environ.get("HUGGING_FACE_HUB_TOKEN")
-if token:
-    login(token)
-else:
-    print("Warning: HUGGING_FACE_HUB_TOKEN not set. Some models may require authentication.")
+app = FastAPI(title="Virtual Try-On API")
 
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.bfloat16
 
+# Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype):
     bfl_repo = "black-forest-labs/FLUX.1-dev"
-    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype,use_auth_token=True)
+    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
     text_encoder_2 = T5EncoderModel.from_pretrained(bfl_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
     transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer", torch_dtype=torch_dtype)
     vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae")
@@ -82,9 +44,15 @@ def load_models(device=device, torch_dtype=torch_dtype):
     )
     return pipe
 
-# Load models at startup
+# Global pipeline variable (loaded at startup)
 pipe = load_models()
 
+# Define input model using Pydantic for request validation
+class TryOnRequest(BaseModel):
+    user_image_base64: str
+    garment_image_base64: str
+
+# Define the generate_image function (unchanged from your code, with channel fix)
 def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
     height, width = int(height), int(width)
     width = width - (width % 16)
@@ -93,10 +61,18 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     concat_image_list = [np.zeros((height, width, 3), dtype=np.uint8)]
     has_model_image = model_image is not None
     has_garment_image = garment_image is not None
+    
     if has_model_image:
+        if model_image.shape[-1] == 4:  # Convert RGBA to RGB if needed
+            model_image = Image.fromarray(model_image, mode="RGBA").convert("RGB")
+            model_image = np.array(model_image)
         model_image = resize_by_height(model_image, height)
         concat_image_list.append(model_image)
+    
     if has_garment_image:
+        if garment_image.shape[-1] == 4:  # Convert RGBA to RGB if needed
+            garment_image = Image.fromarray(garment_image, mode="RGBA").convert("RGB")
+            garment_image = np.array(garment_image)
         garment_image = resize_by_height(garment_image, height)
         concat_image_list.append(garment_image)
     
@@ -108,7 +84,7 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     mask_image = Image.fromarray(mask)
     
     output = pipe(
-        "",  # Empty prompt
+        "",
         image=image,
         mask_image=mask_image,
         strength=1.0,
@@ -125,19 +101,12 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     
     return output
 
-# Serve the frontend at root
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    with open("static/index.html", "r") as f:
-        return f.read()
-
-# Endpoint for virtual try-on
-@app.post("/try-on/")
-async def process_images(request: ImageRequest):
+# Define the processing function (adapted for API)
+def process_images_standalone(user_image_base64: str, garment_image_base64: str):
     try:
         # Decode Base64 strings to images
-        user_image_data = base64.b64decode(request.user_image)
-        garment_image_data = base64.b64decode(request.garment_image)
+        user_image_data = base64.b64decode(user_image_base64)
+        garment_image_data = base64.b64decode(garment_image_base64)
         
         user_img = Image.open(io.BytesIO(user_image_data)).convert("RGBA")
         garment_img = Image.open(io.BytesIO(garment_image_data)).convert("RGBA")
@@ -156,4 +125,24 @@ async def process_images(request: ImageRequest):
         
         return {"output_image": output_base64}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
+
+# Define the API endpoint
+@app.post("/try-on/", response_model=dict)
+async def try_on(request: TryOnRequest):
+    """
+    Generate a virtual try-on image from base64-encoded user and garment images.
+    
+    Args:
+        request: JSON payload with user_image_base64 and garment_image_base64
+        
+    Returns:
+        JSON response with base64-encoded output image
+    """
+    result = process_images_standalone(request.user_image_base64, request.garment_image_base64)
+    return result
+
+# Optional: Add a root endpoint for testing
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings."}
