@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
+import os  # Added for checking cached model
 
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
@@ -20,20 +21,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.bfloat16
 
+# Cached model directory (from Dockerfile)
+MODEL_CACHE_DIR = "/models"
+
 # Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype):
     bfl_repo = "black-forest-labs/FLUX.1-dev"
-    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
-    text_encoder_2 = T5EncoderModel.from_pretrained(bfl_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
-    transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer", torch_dtype=torch_dtype)
-    vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae")
     
+    # Load models from cached location
+    text_encoder = CLIPTextModel.from_pretrained(os.path.join(MODEL_CACHE_DIR, bfl_repo, "text_encoder"), torch_dtype=torch_dtype)
+    text_encoder_2 = T5EncoderModel.from_pretrained(os.path.join(MODEL_CACHE_DIR, bfl_repo, "text_encoder_2"), torch_dtype=torch_dtype)
+    transformer = FluxTransformer2DModel.from_pretrained(os.path.join(MODEL_CACHE_DIR, bfl_repo, "transformer"), torch_dtype=torch_dtype)
+    vae = AutoencoderKL.from_pretrained(os.path.join(MODEL_CACHE_DIR, bfl_repo, "vae"))
+
     pipe = FluxTryonPipeline.from_pretrained(
-        bfl_repo,
+        os.path.join(MODEL_CACHE_DIR, bfl_repo),
         transformer=transformer,
         text_encoder=text_encoder,
         text_encoder_2=text_encoder_2,
@@ -45,11 +52,13 @@ def load_models(device=device, torch_dtype=torch_dtype):
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
     
+    # Load LoRA weights
     pipe.load_lora_weights(
         "loooooong/Any2anyTryon",
         weight_name="dev_lora_any2any_tryon.safetensors",
         adapter_name="tryon",
     )
+    
     return pipe
 
 # Global pipeline variable (loaded at startup)
@@ -60,7 +69,7 @@ class TryOnRequest(BaseModel):
     user_image_base64: str
     garment_image_base64: str
 
-# Define the generate_image function (unchanged from your code, with channel fix)
+# Define the generate_image function
 def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
     height, width = int(height), int(width)
     width = width - (width % 16)
