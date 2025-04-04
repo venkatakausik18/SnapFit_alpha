@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip show runpod
 # Cache the model inside the image
-RUN mkdir -p /models/flux_tryon
+RUN mkdir -p /models
 RUN pip install huggingface_hub && \
     python -c "from transformers import CLIPTextModel, T5EncoderModel; from diffusers import FluxTransformer2DModel, AutoencoderKL; \
                CLIPTextModel.from_pretrained('black-forest-labs/FLUX.1-dev', subfolder='text_encoder', cache_dir='/models/flux_tryon'); \
