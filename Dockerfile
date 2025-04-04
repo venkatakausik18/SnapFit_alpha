@@ -5,7 +5,7 @@ FROM pytorch/pytorch:2.5.0-cuda12.4-cudnn9-runtime
 RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 
 # Set model cache directory
-ENV MODEL_CACHE_DIR=/models/flux_tryon
+ENV MODEL_CACHE_DIR=/models
 RUN mkdir -p $MODEL_CACHE_DIR
 
 # Use curl instead of wget with retry logic
