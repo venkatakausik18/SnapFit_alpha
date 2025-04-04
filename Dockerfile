@@ -12,23 +12,21 @@ WORKDIR /app
 # Copy requirements file
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip show runpod
-
-## Set environment variable for model cache
-ENV MODEL_CACHE_DIR=/models/flux_tryon
-
 # Install dependencies
-RUN pip install huggingface_hub transformers diffusers torch torchvision torchaudio 
+RUN pip install --no-cache-dir huggingface_hub transformers diffusers torch torchvision torchaudio
 
-# Preload models into cache (avoiding downloads at runtime)
-RUN python -c "from transformers import CLIPTextModel, T5EncoderModel; \
-    from diffusers import FluxTransformer2DModel, AutoencoderKL; \
-    CLIPTextModel.from_pretrained('black-forest-labs/FLUX.1-dev', subfolder='text_encoder', cache_dir='$MODEL_CACHE_DIR'); \
-    T5EncoderModel.from_pretrained('black-forest-labs/FLUX.1-dev', subfolder='text_encoder_2', cache_dir='$MODEL_CACHE_DIR'); \
-    FluxTransformer2DModel.from_pretrained('black-forest-labs/FLUX.1-dev', subfolder='transformer', cache_dir='$MODEL_CACHE_DIR'); \
-    AutoencoderKL.from_pretrained('black-forest-labs/FLUX.1-dev', subfolder='vae', cache_dir='$MODEL_CACHE_DIR')"
+# Set model cache directory
+ENV MODEL_CACHE_DIR=/models
+
+# Create model directory
+RUN mkdir -p $MODEL_CACHE_DIR
+
+# Download models manually using wget
+RUN wget -P $MODEL_CACHE_DIR https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/text_encoder/pytorch_model.bin
+RUN wget -P $MODEL_CACHE_DIR https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/text_encoder_2/pytorch_model.bin
+RUN wget -P $MODEL_CACHE_DIR https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/transformer/pytorch_model.bin
+RUN wget -P $MODEL_CACHE_DIR https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/vae/pytorch_model.bin
+
 
 # Copy the entire project
 COPY . .
