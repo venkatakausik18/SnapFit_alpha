@@ -1,35 +1,48 @@
-# Use official PyTorch image with CUDA 12.4
-FROM pytorch/pytorch:2.5.0-cuda12.4-cudnn9-runtime
+# Base image with PyTorch + CUDA
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
-
-# Set model cache directory
-ENV MODEL_CACHE_DIR=/models
-RUN mkdir -p $MODEL_CACHE_DIR
-
-# Use curl instead of wget with retry logic
-RUN curl --retry 5 -L -o $MODEL_CACHE_DIR/text_encoder.bin \
-    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/text_encoder/pytorch_model.bin && \
-    curl --retry 5 -L -o $MODEL_CACHE_DIR/text_encoder_2.bin \
-    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/text_encoder_2/pytorch_model.bin && \
-    curl --retry 5 -L -o $MODEL_CACHE_DIR/transformer.bin \
-    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/transformer/pytorch_model.bin && \
-    curl --retry 5 -L -o $MODEL_CACHE_DIR/vae.bin \
-    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/vae/pytorch_model.bin
+# System packages
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
-WORKDIR /app
+WORKDIR /workspace
 
-# Copy requirements file
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the entire project
+# Copy your local code
 COPY . .
 
-# Expose port 8000 for FastAPI
+# Install Python dependencies
+RUN pip install --upgrade pip
+RUN pip install \
+    fastapi \
+    uvicorn[standard] \
+    numpy \
+    pillow \
+    transformers \
+    diffusers \
+    accelerate \
+    safetensors \
+    xformers \
+    huggingface_hub \
+    tqdm \
+    opencv-python \
+    scikit-image \
+    einops \
+    peft
+
+# Expose API port
 EXPOSE 8000
 
-# Run the FastAPI app with uvicorn
+# Set environment variable to prevent token warnings
+ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
+
+# Ensure model is loaded from volume
+ENV MODEL_DIR=/workspace/checkpoints
+
+# Launch the FastAPI app
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
