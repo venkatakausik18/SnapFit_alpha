@@ -27,7 +27,7 @@ torch_dtype = torch.bfloat16
 
 # Load models (from local RunPod volume)
 def load_models(device=device, torch_dtype=torch_dtype):
-    local_repo = "/workspace/checkpoints"
+    local_repo = "/runpod-volume/checkpoints"  # Changed from /workspace
     text_encoder = CLIPTextModel.from_pretrained(local_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
     text_encoder_2 = T5EncoderModel.from_pretrained(local_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
     transformer = FluxTransformer2DModel.from_pretrained(local_repo, subfolder="transformer", torch_dtype=torch_dtype)
