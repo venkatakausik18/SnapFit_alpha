@@ -16,24 +16,11 @@ WORKDIR /workspace
 # Copy your local code
 COPY . .
 
+# Copy requirements file
+COPY requirements.txt .
+
 # Install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install \
-    fastapi \
-    uvicorn[standard] \
-    numpy \
-    pillow \
-    transformers \
-    diffusers \
-    accelerate \
-    safetensors \
-    xformers \
-    huggingface_hub \
-    tqdm \
-    opencv-python \
-    scikit-image \
-    einops \
-    peft
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose API port
 EXPOSE 8000
