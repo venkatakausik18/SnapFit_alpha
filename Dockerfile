@@ -1,13 +1,12 @@
 # Base image with PyTorch + CUDA
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
-# System packages
+# Avoid tzdata prompt
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
 RUN apt-get update && apt-get install -y \
-    git \
-    wget \
-    curl \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    git wget ffmpeg libgl1 tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
