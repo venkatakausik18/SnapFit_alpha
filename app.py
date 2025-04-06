@@ -4,7 +4,7 @@ from PIL import Image
 import base64
 import io
 import os
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
@@ -33,25 +33,25 @@ async def load_models_async():
     if not hasattr(app, 'pipe'):
         try:
             text_encoder = CLIPTextModel.from_pretrained(
-                MODEL_PATH, 
-                subfolder="text_encoder", 
-                torch_dtype=torch_dtype
+                MODEL_PATH,
+                subfolder="text_encoder",
+                torch_dtype=torch_dtype,
             )
             text_encoder_2 = T5EncoderModel.from_pretrained(
-                MODEL_PATH, 
-                subfolder="text_encoder_2", 
-                torch_dtype=torch_dtype
+                MODEL_PATH,
+                subfolder="text_encoder_2",
+                torch_dtype=torch_dtype,
             )
             transformer = FluxTransformer2DModel.from_pretrained(
-                MODEL_PATH, 
-                subfolder="transformer", 
-                torch_dtype=torch_dtype
+                MODEL_PATH,
+                subfolder="transformer",
+                torch_dtype=torch_dtype,
             )
             vae = AutoencoderKL.from_pretrained(
-                MODEL_PATH, 
-                subfolder="vae"
+                MODEL_PATH,
+                subfolder="vae",
             )
-            
+
             app.pipe = FluxTryonPipeline.from_pretrained(
                 MODEL_PATH,
                 transformer=transformer,
@@ -60,11 +60,11 @@ async def load_models_async():
                 vae=vae,
                 torch_dtype=torch_dtype,
             ).to(device=device, dtype=torch_dtype)
-            
+
             app.pipe.enable_attention_slicing()
             app.pipe.vae.enable_slicing()
             app.pipe.vae.enable_tiling()
-            
+
             # Load LoRA weights if available
             try:
                 app.pipe.load_lora_weights(
@@ -74,7 +74,7 @@ async def load_models_async():
                 )
             except Exception as e:
                 print(f"LoRA weights not loaded: {e}")
-                
+
         except Exception as e:
             raise RuntimeError(f"Model loading failed: {str(e)}")
 
@@ -82,13 +82,6 @@ async def load_models_async():
 async def startup_event():
     """Async model loading during startup"""
     await load_models_async()
-    # Warmup inference
-    if os.getenv("RUNPOD_ENDPOINT_ID"):
-        dummy_request = TryOnRequest(
-            user_image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-            garment_image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )
-        process_images_standalone(dummy_request.user_image_base64, dummy_request.garment_image_base64)
 
 class TryOnRequest(BaseModel):
     user_image_base64: str
@@ -124,7 +117,7 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     mask[:, :width] = 255
     mask_image = Image.fromarray(mask)
 
-    output = pipe(
+    output = app.pipe(
         "",
         image=image,
         mask_image=mask_image,
@@ -160,10 +153,10 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         output_base64 = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
 
         return {"output_image": output_base64}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
-# Add health check endpoint
 @app.get("/health")
 async def health_check():
     return {"status": "ready" if hasattr(app, 'pipe') else "loading"}
@@ -175,5 +168,3 @@ async def try_on(request: TryOnRequest):
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings."}
-
-
