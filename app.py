@@ -3,7 +3,8 @@ import numpy as np
 from PIL import Image
 import base64
 import io
-from fastapi import FastAPI, HTTPException
+import os
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
@@ -12,10 +13,9 @@ from diffusers import FluxTransformer2DModel, AutoencoderKL
 
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,55 +25,70 @@ app.add_middleware(
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.bfloat16
 
-# Load models (from local RunPod volume)
-def load_models(device=device, torch_dtype=torch_dtype):
-    local_repo = "/runpod-volume/checkpoints"  # Changed from /workspace
-    text_encoder = CLIPTextModel.from_pretrained(local_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
-    text_encoder_2 = T5EncoderModel.from_pretrained(local_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
-    transformer = FluxTransformer2DModel.from_pretrained(local_repo, subfolder="transformer", torch_dtype=torch_dtype)
-    vae = AutoencoderKL.from_pretrained(local_repo, subfolder="vae")
-
-    pipe = FluxTryonPipeline.from_pretrained(
-        local_repo,
-        transformer=transformer,
-        text_encoder=text_encoder,
-        text_encoder_2=text_encoder_2,
-        vae=vae,
-        torch_dtype=torch_dtype,
-    ).to(device=device, dtype=torch_dtype)
-
-    pipe.enable_attention_slicing()
-    pipe.vae.enable_slicing()
-    pipe.vae.enable_tiling()
-
-    # Optional LoRA weights (skip or update this path if needed)
-    try:
-        pipe.load_lora_weights(
-            "loooooong/Any2anyTryon",
-            weight_name="dev_lora_any2any_tryon.safetensors",
-            adapter_name="tryon",
-        )
-    except Exception as e:
-        print(f"Warning: Could not load LoRA weights: {e}")
-
-    return pipe
-
-# app.py modifications (replace global pipe variable)
-from fastapi import BackgroundTasks
+# Corrected path for Serverless Endpoints
+MODEL_PATH = "/runpod-volume/checkpoints"
 
 async def load_models_async():
+    """Async model loader with error handling"""
     if not hasattr(app, 'pipe'):
-        app.pipe = load_models()
+        try:
+            text_encoder = CLIPTextModel.from_pretrained(
+                MODEL_PATH, 
+                subfolder="text_encoder", 
+                torch_dtype=torch_dtype
+            )
+            text_encoder_2 = T5EncoderModel.from_pretrained(
+                MODEL_PATH, 
+                subfolder="text_encoder_2", 
+                torch_dtype=torch_dtype
+            )
+            transformer = FluxTransformer2DModel.from_pretrained(
+                MODEL_PATH, 
+                subfolder="transformer", 
+                torch_dtype=torch_dtype
+            )
+            vae = AutoencoderKL.from_pretrained(
+                MODEL_PATH, 
+                subfolder="vae"
+            )
+            
+            app.pipe = FluxTryonPipeline.from_pretrained(
+                MODEL_PATH,
+                transformer=transformer,
+                text_encoder=text_encoder,
+                text_encoder_2=text_encoder_2,
+                vae=vae,
+                torch_dtype=torch_dtype,
+            ).to(device=device, dtype=torch_dtype)
+            
+            app.pipe.enable_attention_slicing()
+            app.pipe.vae.enable_slicing()
+            app.pipe.vae.enable_tiling()
+            
+            # Load LoRA weights if available
+            try:
+                app.pipe.load_lora_weights(
+                    "loooooong/Any2anyTryon",
+                    weight_name="dev_lora_any2any_tryon.safetensors",
+                    adapter_name="tryon",
+                )
+            except Exception as e:
+                print(f"LoRA weights not loaded: {e}")
+                
+        except Exception as e:
+            raise RuntimeError(f"Model loading failed: {str(e)}")
 
 @app.on_event("startup")
 async def startup_event():
+    """Async model loading during startup"""
     await load_models_async()
-    # Add to startup_event()
-async def warmup():
-    if os.getenv("RUNPOD_POD_ID"):
-        requests.post("http://localhost:8000/try-on/", json={...})
-
-
+    # Warmup inference
+    if os.getenv("RUNPOD_ENDPOINT_ID"):
+        dummy_request = TryOnRequest(
+            user_image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            garment_image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        process_images_standalone(dummy_request.user_image_base64, dummy_request.garment_image_base64)
 
 class TryOnRequest(BaseModel):
     user_image_base64: str
@@ -148,6 +163,11 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "ready" if hasattr(app, 'pipe') else "loading"}
+
 @app.post("/try-on/", response_model=dict)
 async def try_on(request: TryOnRequest):
     return process_images_standalone(request.user_image_base64, request.garment_image_base64)
@@ -156,8 +176,4 @@ async def try_on(request: TryOnRequest):
 async def root():
     return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings."}
 
-# Add health check endpoint
-@app.get("/health")
-async def health_check():
-    return {"status": "ready" if hasattr(app, 'pipe') else "loading"}
 
