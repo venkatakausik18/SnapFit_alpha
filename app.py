@@ -28,55 +28,56 @@ torch_dtype = torch.bfloat16
 # Corrected path for Serverless Endpoints
 MODEL_PATH = "/runpod-volume/checkpoints"
 
-async def load_models_async():
-    """Async model loader with error handling"""
-    if not hasattr(app, 'pipe'):
-        try:
-            text_encoder = CLIPTextModel.from_pretrained(
-                MODEL_PATH,
-                subfolder="text_encoder",
-                torch_dtype=torch_dtype,
-            )
-            text_encoder_2 = T5EncoderModel.from_pretrained(
-                MODEL_PATH,
-                subfolder="text_encoder_2",
-                torch_dtype=torch_dtype,
-            )
-            transformer = FluxTransformer2DModel.from_pretrained(
-                MODEL_PATH,
-                subfolder="transformer",
-                torch_dtype=torch_dtype,
-            )
-            vae = AutoencoderKL.from_pretrained(
-                MODEL_PATH,
-                subfolder="vae",
-            )
+# Replace async def load_models_async() with:
+def load_models():
+    """Synchronous model loader"""
+    text_encoder = CLIPTextModel.from_pretrained(
+        MODEL_PATH,
+        subfolder="text_encoder",
+        torch_dtype=torch_dtype
+    )
+    
+    text_encoder_2 = T5EncoderModel.from_pretrained(
+        MODEL_PATH,
+        subfolder="text_encoder_2",
+        torch_dtype=torch_dtype
+    )
+    
+    transformer = FluxTransformer2DModel.from_pretrained(
+        MODEL_PATH,
+        subfolder="transformer",
+        torch_dtype=torch_dtype
+    )
+    
+    vae = AutoencoderKL.from_pretrained(
+        MODEL_PATH,
+        subfolder="vae"
+    )
 
-            app.pipe = FluxTryonPipeline.from_pretrained(
-                MODEL_PATH,
-                transformer=transformer,
-                text_encoder=text_encoder,
-                text_encoder_2=text_encoder_2,
-                vae=vae,
-                torch_dtype=torch_dtype,
-            ).to(device=device, dtype=torch_dtype)
+    pipe = FluxTryonPipeline.from_pretrained(
+        MODEL_PATH,
+        transformer=transformer,
+        text_encoder=text_encoder,
+        text_encoder_2=text_encoder_2,
+        vae=vae,
+        torch_dtype=torch_dtype,
+    ).to(device=device, dtype=torch_dtype)
 
-            app.pipe.enable_attention_slicing()
-            app.pipe.vae.enable_slicing()
-            app.pipe.vae.enable_tiling()
+    pipe.enable_attention_slicing()
+    pipe.vae.enable_slicing()
+    pipe.vae.enable_tiling()
 
-            # Load LoRA weights if available
-            try:
-                app.pipe.load_lora_weights(
-                    "loooooong/Any2anyTryon",
-                    weight_name="dev_lora_any2any_tryon.safetensors",
-                    adapter_name="tryon",
-                )
-            except Exception as e:
-                print(f"LoRA weights not loaded: {e}")
+    try:
+        pipe.load_lora_weights(
+            "loooooong/Any2anyTryon",
+            weight_name="dev_lora_any2any_tryon.safetensors",
+            adapter_name="tryon"
+        )
+    except Exception as e:
+        print(f"LoRA weights not loaded: {e}")
 
-        except Exception as e:
-            raise RuntimeError(f"Model loading failed: {str(e)}")
+    return pipe  # Return the pipeline object
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -168,3 +169,8 @@ async def try_on(request: TryOnRequest):
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings."}
+
+
+
+__all__ = ['load_models', 'TryOnRequest', 'process_images_standalone']
+
