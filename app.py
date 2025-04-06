@@ -58,8 +58,17 @@ def load_models(device=device, torch_dtype=torch_dtype):
 
     return pipe
 
-# Global pipeline variable (loaded once at startup)
-pipe = load_models()
+# app.py modifications (replace global pipe variable)
+from fastapi import BackgroundTasks
+
+async def load_models_async():
+    if not hasattr(app, 'pipe'):
+        app.pipe = load_models()
+
+@app.on_event("startup")
+async def startup_event():
+    await load_models_async()
+
 
 class TryOnRequest(BaseModel):
     user_image_base64: str
