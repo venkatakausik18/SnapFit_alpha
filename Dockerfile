@@ -25,8 +25,4 @@ COPY . .
 # Expose port 8000 for FastAPI
 EXPOSE 8000
 
-# Run the FastAPI app with uvicorn
-# Replace the CMD line with:
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 600"]
-
-
+CMD ["python", "-u", "handler.py"]
