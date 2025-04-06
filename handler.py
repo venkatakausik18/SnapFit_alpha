@@ -33,12 +33,12 @@ class ServerlessHandler:
         self.ready = True
 
     async def _load_models(self):
-    """Model loader without async"""
-    try:
-        self.pipe = load_models()  # Now using synchronous loader
-    except Exception as e:
-        print(f"Model loading failed: {str(e)}")
-        raise
+        """Model loader without async"""
+        try:
+            self.pipe = load_models()  # Now using synchronous loader
+        except Exception as e:
+            print(f"Model loading failed: {str(e)}")
+            raise
 
     async def _start_server(self):
         """Non-blocking server startup"""
