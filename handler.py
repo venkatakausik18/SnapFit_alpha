@@ -1,55 +1,61 @@
-import runpod
-import subprocess
-import time
-import requests
-import base64
-from io import BytesIO
+import asyncio
+from fastapi import FastAPI, HTTPException
+from app import load_models, TryOnRequest, process_images_standalone
 
-# Start the FastAPI application as a subprocess
-def start_fastapi():
-    subprocess.Popen(["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"])
-    
-    # Wait for the server to start
-    while True:
+class ServerlessHandler:
+    def __init__(self):
+        self.app = FastAPI(title="Virtual Try-On API")
+        self.pipe = None
+        self.ready = False
+        self._setup()
+
+    def _setup(self):
+        @self.app.get("/health")
+        async def health_check():
+            return {"status": "ready" if self.ready else "loading"}
+
+        @self.app.post("/try-on/")
+        async def try_on(request: TryOnRequest):
+            if not self.ready:
+                raise HTTPException(503, "Service initializing")
+            return process_images_standalone(self.pipe, **request.dict())
+
+        @self.app.get("/")
+        async def root():
+            return {"message": "Virtual Try-On API"}
+
+    async def initialize(self):
+        """Parallel initialization"""
+        server_task = asyncio.create_task(self._start_server())
+        model_task = asyncio.create_task(self._load_models())
+        await asyncio.gather(server_task, model_task)
+        self.ready = True
+
+    async def _load_models(self):
+        """Async model loading with retries"""
         try:
-            response = requests.get("http://localhost:8000/health")
-            if response.status_code == 200:
-                print("FastAPI server is running")
-                break
-        except:
-            print("Waiting for FastAPI server to start...")
-            time.sleep(1)
+            self.pipe = load_models()
+        except Exception as e:
+            print(f"Model loading failed: {str(e)}")
+            raise
 
-# Start the FastAPI server when the handler is imported
-start_fastapi()
-
-# Define the handler function
-def handler(event):
-    try:
-        # Extract the input data
-        input_data = event.get("input", {})
-        
-        # Check if we have the required fields
-        if "user_image_base64" not in input_data or "garment_image_base64" not in input_data:
-            return {"error": "Missing required fields: user_image_base64 and garment_image_base64"}
-        
-        # Forward the request to the FastAPI application
-        response = requests.post(
-            "http://localhost:8000/try-on/",
-            json={
-                "user_image_base64": input_data["user_image_base64"],
-                "garment_image_base64": input_data["garment_image_base64"]
-            }
+    async def _start_server(self):
+        """Non-blocking server startup"""
+        from uvicorn import Config, Server
+        config = Config(
+            app=self.app,
+            host="0.0.0.0",
+            port=8000,
+            timeout_keep_alive=600,
+            limit_max_requests=1000
         )
-        
-        # Return the response from the FastAPI application
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": f"FastAPI returned status code {response.status_code}: {response.text}"}
-    
-    except Exception as e:
-        return {"error": str(e)}
+        server = Server(config)
+        await server.serve()
 
-# Start the runpod handler
-runpod.serverless.start({"handler": handler})
+async def main():
+    handler = ServerlessHandler()
+    await handler.initialize()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
