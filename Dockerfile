@@ -26,4 +26,6 @@ COPY . .
 EXPOSE 8000
 
 # Run the FastAPI app with uvicorn
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Replace CMD with optimized startup script
+CMD ["sh", "-c", "load_models && uvicorn app:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 600 --no-access-log"]
+
