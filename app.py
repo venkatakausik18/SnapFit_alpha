@@ -68,6 +68,11 @@ async def load_models_async():
 @app.on_event("startup")
 async def startup_event():
     await load_models_async()
+    # Add to startup_event()
+async def warmup():
+    if os.getenv("RUNPOD_POD_ID"):
+        requests.post("http://localhost:8000/try-on/", json={...})
+
 
 
 class TryOnRequest(BaseModel):
@@ -150,3 +155,9 @@ async def try_on(request: TryOnRequest):
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings."}
+
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "ready" if hasattr(app, 'pipe') else "loading"}
+
