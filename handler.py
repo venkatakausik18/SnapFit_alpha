@@ -1,6 +1,7 @@
 import asyncio
 from fastapi import FastAPI, HTTPException
-from app import load_models, TryOnRequest, process_images_standalone
+# Change the import line to:
+from app import TryOnRequest, process_images_standalone, load_models
 
 class ServerlessHandler:
     def __init__(self):
@@ -32,12 +33,12 @@ class ServerlessHandler:
         self.ready = True
 
     async def _load_models(self):
-        """Async model loading with retries"""
-        try:
-            self.pipe = load_models()
-        except Exception as e:
-            print(f"Model loading failed: {str(e)}")
-            raise
+    """Model loader without async"""
+    try:
+        self.pipe = load_models()  # Now using synchronous loader
+    except Exception as e:
+        print(f"Model loading failed: {str(e)}")
+        raise
 
     async def _start_server(self):
         """Non-blocking server startup"""
