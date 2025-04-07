@@ -1,62 +1,84 @@
-import asyncio
-from fastapi import FastAPI, HTTPException
-# Change the import line to:
-from app import TryOnRequest, process_images_standalone, load_models
+import runpod
+import subprocess
+import time
+import requests
+import os
+import signal
+import threading
+import base64
 
-class ServerlessHandler:
-    def __init__(self):
-        self.app = FastAPI(title="Virtual Try-On API")
-        self.pipe = None
-        self.ready = False
-        self._setup()
+# Global variable to track if the FastAPI app is running
+fastapi_process = None
+fastapi_port = 8000
 
-    def _setup(self):
-        @self.app.get("/health")
-        async def health_check():
-            return {"status": "ready" if self.ready else "loading"}
-
-        @self.app.post("/try-on/")
-        async def try_on(request: TryOnRequest):
-            if not self.ready:
-                raise HTTPException(503, "Service initializing")
-            return process_images_standalone(self.pipe, **request.dict())
-
-        @self.app.get("/")
-        async def root():
-            return {"message": "Virtual Try-On API"}
-
-    async def initialize(self):
-        """Parallel initialization"""
-        server_task = asyncio.create_task(self._start_server())
-        model_task = asyncio.create_task(self._load_models())
-        await asyncio.gather(server_task, model_task)
-        self.ready = True
-
-    async def _load_models(self):
-        """Model loader without async"""
-        try:
-            self.pipe = load_models()  # Now using synchronous loader
-        except Exception as e:
-            print(f"Model loading failed: {str(e)}")
-            raise
-
-    async def _start_server(self):
-        """Non-blocking server startup"""
-        from uvicorn import Config, Server
-        config = Config(
-            app=self.app,
-            host="0.0.0.0",
-            port=8000,
-            timeout_keep_alive=600,
-            limit_max_requests=1000
+def start_fastapi_app():
+    """Start the FastAPI application as a subprocess"""
+    global fastapi_process
+    if fastapi_process is None:
+        # Start the FastAPI app using uvicorn
+        fastapi_process = subprocess.Popen(
+            ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", str(fastapi_port)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
-        server = Server(config)
-        await server.serve()
+        # Wait for the FastAPI app to start (models will load during this time)
+        print("Starting FastAPI application and loading models...")
+        time.sleep(180)  # Give more time for model loading
+        print("FastAPI application started on port", fastapi_port)
 
-async def main():
-    handler = ServerlessHandler()
-    await handler.initialize()
+def stop_fastapi_app():
+    """Stop the FastAPI application subprocess"""
+    global fastapi_process
+    if fastapi_process is not None:
+        fastapi_process.terminate()
+        fastapi_process.wait()
+        fastapi_process = None
+        print("FastAPI application stopped")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+def handler(job):
+    """
+    Handler function for RunPod serverless.
+    This forwards requests to your FastAPI application.
+    """
+    # Start the FastAPI app if it's not already running
+    start_fastapi_app()
+    
+    # Get the input from the job
+    job_input = job["input"]
+    
+    # Extract the base64 images from the input
+    user_image_base64 = job_input.get("user_image_base64", "")
+    garment_image_base64 = job_input.get("garment_image_base64", "")
+    
+    if not user_image_base64 or not garment_image_base64:
+        return {"error": "Both user_image_base64 and garment_image_base64 are required"}
+    
+    # Prepare the payload for the FastAPI app
+    payload = {
+        "user_image_base64": user_image_base64,
+        "garment_image_base64": garment_image_base64
+    }
+    
+    try:
+        # Forward the request to your FastAPI app's try-on endpoint
+        url = f"http://localhost:{fastapi_port}/try-on/"
+        response = requests.post(url, json=payload, timeout=120)  # Longer timeout for image processing
+        
+        # Return the response
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {
+                "error": f"FastAPI returned status code {response.status_code}",
+                "detail": response.text
+            }
+    except Exception as e:
+        return {"error": str(e)}
 
+# Register a cleanup function to stop the FastAPI app when the handler exits
+def cleanup():
+    stop_fastapi_app()
+
+# Start the serverless function
+runpod.serverless.start({"handler": handler, "cleanup_function": cleanup})
