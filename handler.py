@@ -24,7 +24,7 @@ def start_fastapi_app():
         )
         # Wait for the FastAPI app to start (models will load during this time)
         print("Starting FastAPI application and loading models...")
-        time.sleep(180)  # Give more time for model loading
+        time.sleep(240)  # Give more time for model loading
         print("FastAPI application started on port", fastapi_port)
 
 def stop_fastapi_app():
