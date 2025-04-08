@@ -6,10 +6,19 @@ import os
 import signal
 import threading
 import base64
+import socket
 
 # Global variable to track if the FastAPI app is running
 fastapi_process = None
 fastapi_port = 8000
+
+def is_fastapi_app_ready():
+    """Check if the FastAPI app is running and ready to accept connections."""
+    try:
+        with socket.create_connection(("localhost", fastapi_port), timeout=5):
+            return True
+    except (socket.timeout, ConnectionRefusedError):
+        return False
 
 def start_fastapi_app():
     """Start the FastAPI application as a subprocess"""
@@ -22,9 +31,12 @@ def start_fastapi_app():
             stderr=subprocess.PIPE,
             text=True
         )
-        # Wait for the FastAPI app to start (models will load during this time)
         print("Starting FastAPI application and loading models...")
-        time.sleep(60)  # Give more time for model loading
+        
+        # Wait for the FastAPI app to start and be ready
+        while not is_fastapi_app_ready():
+            time.sleep(2)
+        
         print("FastAPI application started on port", fastapi_port)
 
 def stop_fastapi_app():
@@ -69,11 +81,13 @@ def handler(job):
         if response.status_code == 200:
             return response.json()
         else:
+            print(f"FastAPI returned status code {response.status_code}: {response.text}")
             return {
                 "error": f"FastAPI returned status code {response.status_code}",
                 "detail": response.text
             }
     except Exception as e:
+        print(f"Error while calling FastAPI: {e}")
         return {"error": str(e)}
 
 # Register a cleanup function to stop the FastAPI app when the handler exits
