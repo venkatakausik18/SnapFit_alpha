@@ -2,10 +2,6 @@ import runpod
 import subprocess
 import time
 import requests
-import os
-import signal
-import threading
-import base64
 import socket
 
 # Global variable to track if the FastAPI app is running
@@ -15,6 +11,7 @@ fastapi_port = 8000
 def is_fastapi_app_ready():
     """Check if the FastAPI app is running and ready to accept connections."""
     try:
+        # Try to establish a connection to FastAPI on localhost:8000
         with socket.create_connection(("localhost", fastapi_port), timeout=5):
             return True
     except (socket.timeout, ConnectionRefusedError):
@@ -35,8 +32,7 @@ def start_fastapi_app():
         
         # Wait for the FastAPI app to start and be ready
         while not is_fastapi_app_ready():
-            time.sleep(2)
-        
+            time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
         print("FastAPI application started on port", fastapi_port)
 
 def stop_fastapi_app():
@@ -75,6 +71,13 @@ def handler(job):
     try:
         # Forward the request to your FastAPI app's try-on endpoint
         url = f"http://localhost:{fastapi_port}/try-on/"
+        
+        # Wait for FastAPI to be ready before sending the request
+        while not is_fastapi_app_ready():
+            print("Waiting for FastAPI to be ready...")
+            time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
+
+        # Send POST request to FastAPI
         response = requests.post(url, json=payload, timeout=120)  # Longer timeout for image processing
         
         # Return the response
