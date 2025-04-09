@@ -3,14 +3,15 @@ import numpy as np
 from PIL import Image
 import base64
 import io
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse  # <-- Add this line
+from fastapi import FastAPI, HTTPException, File, UploadFile  # <-- Add File and UploadFile here
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
 from fastapi.staticfiles import StaticFiles
+from io import BytesIO
 # Initialize FastAPI app
 app = FastAPI()
 
