@@ -1,22 +1,11 @@
 import torch
 import numpy as np
 from PIL import Image
-import os
 import base64
 import io
-import runpod
-from diffusers import FluxTransformer2DModel, FluxPipeline, AutoencoderKL
-from transformers import T5EncoderModel, CLIPTextModel
-from src.pipeline_tryon import FluxTryonPipeline
-
-# -*- coding: utf-8 -*-
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from PIL import Image
-import numpy as np
-import torch
-from io import BytesIO
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
@@ -33,14 +22,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.bfloat16
 
 def load_models(device=device, torch_dtype=torch_dtype):
-    bfl_repo = "workspace/checkpoints"
-    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
-    text_encoder_2 = T5EncoderModel.from_pretrained(bfl_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
-    transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer", torch_dtype=torch_dtype)
-    vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae")
+    local_repo = "workspace/checkpoints"
+    text_encoder = CLIPTextModel.from_pretrained(local_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
+    text_encoder_2 = T5EncoderModel.from_pretrained(local_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
+    transformer = FluxTransformer2DModel.from_pretrained(local_repo, subfolder="transformer", torch_dtype=torch_dtype)
+    vae = AutoencoderKL.from_pretrained(local_repo, subfolder="vae")
     
     pipe = FluxTryonPipeline.from_pretrained(
-        bfl_repo,
+        local_repo,
         transformer=transformer,
         text_encoder=text_encoder,
         text_encoder_2=text_encoder_2,
