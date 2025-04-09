@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
-
+from fastapi.staticfiles import StaticFiles
 # Initialize FastAPI app
 app = FastAPI()
 
