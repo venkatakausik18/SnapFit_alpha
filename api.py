@@ -3,8 +3,8 @@ import numpy as np
 from PIL import Image
 import base64
 import io
-from fastapi import FastAPI, HTTPException, File, UploadFile  # <-- Add File and UploadFile here
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, File, UploadFile  # <-- Add File, UploadFile
+from fastapi.responses import HTMLResponse, FileResponse  # <-- Add FileResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
