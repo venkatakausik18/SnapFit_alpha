@@ -4,6 +4,7 @@ from PIL import Image
 import base64
 import io
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse  # <-- Add this line
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
