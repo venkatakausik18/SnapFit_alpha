@@ -61,10 +61,18 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     concat_image_list = [np.zeros((height, width, 3), dtype=np.uint8)]
     has_model_image = model_image is not None
     has_garment_image = garment_image is not None
+    
     if has_model_image:
+        if model_image.shape[-1] == 4:  # Convert RGBA to RGB if needed
+            model_image = Image.fromarray(model_image, mode="RGBA").convert("RGB")
+            model_image = np.array(model_image)
         model_image = resize_by_height(model_image, height)
         concat_image_list.append(model_image)
+    
     if has_garment_image:
+        if garment_image.shape[-1] == 4:  # Convert RGBA to RGB if needed
+            garment_image = Image.fromarray(garment_image, mode="RGBA").convert("RGB")
+            garment_image = np.array(garment_image)
         garment_image = resize_by_height(garment_image, height)
         concat_image_list.append(garment_image)
     
@@ -76,7 +84,7 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     mask_image = Image.fromarray(mask)
     
     output = pipe(
-        "",  # Empty prompt
+        "",
         image=image,
         mask_image=mask_image,
         strength=1.0,
@@ -92,8 +100,8 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     ).images[0]
     
     return output
-
 # Serve the frontend at root
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     with open("static/index.html", "r") as f:
