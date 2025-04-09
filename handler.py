@@ -78,7 +78,7 @@ def handler(job):
             time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
 
         # Send POST request to FastAPI
-        response = requests.post(url, json=payload, timeout=120)  # Longer timeout for image processing
+        response = requests.post(url, json=payload, timeout=180)  # Longer timeout for image processing
         
         # Return the response
         if response.status_code == 200:
