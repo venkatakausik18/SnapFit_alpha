@@ -3,10 +3,13 @@ import subprocess
 import time
 import requests
 import socket
+import asyncio
+import random
 
-# Global variable to track if the FastAPI app is running
+# Global variables
 fastapi_process = None
 fastapi_port = 8000
+request_rate = 0
 
 def is_fastapi_app_ready():
     """Check if the FastAPI app is running and ready to accept connections."""
@@ -44,10 +47,10 @@ def stop_fastapi_app():
         fastapi_process = None
         print("FastAPI application stopped")
 
-def handler(job):
+async def handler(job):
     """
-    Handler function for RunPod serverless.
-    This forwards requests to your FastAPI application.
+    Asynchronous handler function for RunPod serverless.
+    This forwards requests to your FastAPI application with concurrency support.
     """
     # Start the FastAPI app if it's not already running
     start_fastapi_app()
@@ -75,9 +78,11 @@ def handler(job):
         # Wait for FastAPI to be ready before sending the request
         while not is_fastapi_app_ready():
             print("Waiting for FastAPI to be ready...")
-            time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
+            await asyncio.sleep(2)  # Async sleep to not block other requests
 
         # Send POST request to FastAPI
+        # Using a synchronous request inside an async function
+        # For better performance, consider using aiohttp for async HTTP requests
         response = requests.post(url, json=payload, timeout=180)  # Longer timeout for image processing
         
         # Return the response
@@ -93,9 +98,44 @@ def handler(job):
         print(f"Error while calling FastAPI: {e}")
         return {"error": str(e)}
 
+def adjust_concurrency(current_concurrency):
+    """
+    Adjusts the concurrency level based on the current request rate.
+    """
+    global request_rate
+    update_request_rate()  # Update the request rate
+
+    max_concurrency = 10
+    min_concurrency = 1
+    high_request_rate_threshold = 50
+
+    if (
+        request_rate > high_request_rate_threshold
+        and current_concurrency < max_concurrency
+    ):
+        return current_concurrency + 1
+    elif (
+        request_rate <= high_request_rate_threshold
+        and current_concurrency > min_concurrency
+    ):
+        return current_concurrency - 1
+    return current_concurrency
+
+def update_request_rate():
+    """
+    Updates the request rate based on actual or simulated metrics.
+    In a production environment, you might want to track actual request rates.
+    """
+    global request_rate
+    request_rate = random.randint(20, 100)  # Simulate changes in request rate
+
 # Register a cleanup function to stop the FastAPI app when the handler exits
 def cleanup():
     stop_fastapi_app()
 
-# Start the serverless function
-runpod.serverless.start({"handler": handler, "cleanup_function": cleanup})
+# Start the serverless function with concurrency support
+runpod.serverless.start({
+    "handler": handler, 
+    "cleanup_function": cleanup,
+    "concurrency_modifier": adjust_concurrency
+})
