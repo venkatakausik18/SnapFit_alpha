@@ -107,7 +107,7 @@ def adjust_concurrency(current_concurrency):
 
     max_concurrency = 10
     min_concurrency = 1
-    high_request_rate_threshold = 50
+    high_request_rate_threshold = 5
 
     if (
         request_rate > high_request_rate_threshold
