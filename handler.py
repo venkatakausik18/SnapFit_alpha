@@ -5,38 +5,57 @@ import requests
 import socket
 import asyncio
 import random
+import gc
+import os
 
 # Global variables
 fastapi_process = None
 fastapi_port = 8000
 request_rate = 0
+models_loaded = False
 
 def is_fastapi_app_ready():
     """Check if the FastAPI app is running and ready to accept connections."""
     try:
-        # Try to establish a connection to FastAPI on localhost:8000
-        with socket.create_connection(("localhost", fastapi_port), timeout=5):
-            return True
-    except (socket.timeout, ConnectionRefusedError):
+        # Use HTTP request instead of raw socket connection
+        response = requests.get(f"http://127.0.0.1:{fastapi_port}/", timeout=5)
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
         return False
 
 def start_fastapi_app():
     """Start the FastAPI application as a subprocess"""
     global fastapi_process
     if fastapi_process is None:
-        # Start the FastAPI app using uvicorn
-        fastapi_process = subprocess.Popen(
-            ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", str(fastapi_port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        print("Starting FastAPI application and loading models...")
-        
-        # Wait for the FastAPI app to start and be ready
-        while not is_fastapi_app_ready():
-            time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
-        print("FastAPI application started on port", fastapi_port)
+        try:
+            # Start the FastAPI app using uvicorn
+            fastapi_process = subprocess.Popen(
+                ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", str(fastapi_port)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            print("Starting FastAPI application and loading models...")
+            
+            # Wait for the FastAPI app to start and be ready
+            start_time = time.time()
+            timeout = 300  # 5 minutes timeout for model loading
+            while not is_fastapi_app_ready():
+                if time.time() - start_time > timeout:
+                    stderr = fastapi_process.stderr.read() if fastapi_process.stderr else "No error output"
+                    print(f"FastAPI app failed to start within {timeout} seconds. Error: {stderr}")
+                    if fastapi_process:
+                        fastapi_process.terminate()
+                        fastapi_process = None
+                    raise TimeoutError(f"FastAPI app failed to start within {timeout} seconds")
+                time.sleep(2)  # Check every 2 seconds if the FastAPI app is ready
+            print(f"FastAPI application started on port {fastapi_port} after {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(f"Error starting FastAPI application: {str(e)}")
+            if fastapi_process:
+                fastapi_process.terminate()
+                fastapi_process = None
+            raise
 
 def stop_fastapi_app():
     """Stop the FastAPI application subprocess"""
@@ -52,6 +71,9 @@ async def handler(job):
     Asynchronous handler function for RunPod serverless.
     This forwards requests to your FastAPI application with concurrency support.
     """
+    handler_start_time = time.time()
+    print(f"Handler started at: {handler_start_time}")
+    
     # Start the FastAPI app if it's not already running
     start_fastapi_app()
     
@@ -73,27 +95,41 @@ async def handler(job):
     
     try:
         # Forward the request to your FastAPI app's try-on endpoint
-        url = f"http://localhost:{fastapi_port}/try-on/"
+        url = f"http://127.0.0.1:{fastapi_port}/try-on/"
         
         # Wait for FastAPI to be ready before sending the request
+        ready_check_start = time.time()
         while not is_fastapi_app_ready():
             print("Waiting for FastAPI to be ready...")
             await asyncio.sleep(2)  # Async sleep to not block other requests
+        ready_check_end = time.time()
+        print(f"FastAPI ready check took {ready_check_end - ready_check_start:.2f}s")
 
         # Send POST request to FastAPI
-        # Using a synchronous request inside an async function
-        # For better performance, consider using aiohttp for async HTTP requests
-        response = requests.post(url, json=payload, timeout=180)  # Longer timeout for image processing
+        print(f"Sending request to FastAPI at: {time.time()}")
+        api_request_start = time.time()
         
-        # Return the response
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"FastAPI returned status code {response.status_code}: {response.text}")
-            return {
-                "error": f"FastAPI returned status code {response.status_code}",
-                "detail": response.text
-            }
+        # Using aiohttp for async HTTP requests instead of synchronous requests
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=180) as response:
+                api_request_end = time.time()
+                print(f"Received response from FastAPI at: {api_request_end}, took {api_request_end - api_request_start:.2f}s")
+                
+                if response.status == 200:
+                    response_data = await response.json()
+                    # Explicitly run garbage collection
+                    gc.collect()
+                    handler_end = time.time()
+                    print(f"Handler about to return at: {handler_end}, total time: {handler_end - handler_start_time:.2f}s")
+                    return response_data
+                else:
+                    error_text = await response.text()
+                    print(f"FastAPI returned status code {response.status}: {error_text}")
+                    return {
+                        "error": f"FastAPI returned status code {response.status}",
+                        "detail": error_text
+                    }
     except Exception as e:
         print(f"Error while calling FastAPI: {e}")
         return {"error": str(e)}
