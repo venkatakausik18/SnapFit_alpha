@@ -3,35 +3,97 @@ import numpy as np
 from PIL import Image
 import base64
 import io
-from fastapi import FastAPI, HTTPException, File, UploadFile  # <-- Add File, UploadFile
-from fastapi.responses import HTMLResponse, FileResponse  # <-- Add FileResponse
+import os
+import gc
+import time
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
-from fastapi.staticfiles import StaticFiles
-from io import BytesIO
+from optimum.quanto import freeze, qfloat8, quantize
+from diffusers.hooks import apply_group_offloading  # Import the group offloading function
+
 # Initialize FastAPI app
-app = FastAPI()
+app = FastAPI(title="Virtual Try-On API")
 
-# Mount static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch_dtype = torch.bfloat16
+torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compatibility
 
-def load_models(device=device, torch_dtype=torch_dtype):
-    local_repo = "/workspace/checkpoints"
-    text_encoder = CLIPTextModel.from_pretrained(local_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
-    text_encoder_2 = T5EncoderModel.from_pretrained(local_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
-    transformer = FluxTransformer2DModel.from_pretrained(local_repo, subfolder="transformer", torch_dtype=torch_dtype)
-    vae = AutoencoderKL.from_pretrained(local_repo, subfolder="vae")
+# Global pipeline variable - will be lazily loaded
+pipe = None
+
+# Static watermark image path
+WATERMARK_IMAGE_PATH = "/runpod-volume/mark.png"  # Path to the uploaded watermark image
+
+# Load models (runs once at startup)
+def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
+    print("Starting model loading process...")
+    start_time = import_time = torch.cuda.Event(enable_timing=True)
+    end_time = torch.cuda.Event(enable_timing=True)
+    start_time.record()
+
+    # Clear CUDA cache before loading models
+    torch.cuda.empty_cache()
+    
+    # Check if we have a serialized model
+    serialized_path = "/runpod-volume/serialized_models"  # Changed path
+    os.makedirs(serialized_path, exist_ok=True)
+    serialized_model_path = f"{serialized_path}/compiled_pipe.pt"
+    
+    if os.path.exists(serialized_model_path):
+        print(f"Loading pre-compiled model from {serialized_model_path}")
+        try:
+            pipe = torch.load(serialized_model_path)
+            print("Successfully loaded pre-compiled model")
+            end_time.record()
+            torch.cuda.synchronize()
+            print(f"Model loading completed in {start_time.elapsed_time(end_time)/1000:.2f} seconds")
+            return pipe
+        except Exception as e:
+            print(f"Error loading serialized model: {e}. Will load from original checkpoints.")
+    
+    # Load from original checkpoints if serialized model isn't available
+    print("Loading models from original checkpoints")
+    bfl_repo = "/runpod-volume/checkpoints"  # Changed path to match your environment
+    
+    # Load models with optimization flags
+    text_encoder = CLIPTextModel.from_pretrained(
+        bfl_repo, 
+        subfolder="text_encoder", 
+        torch_dtype=torch_dtype,
+        local_files_only=True  # Prevent network lookups
+    )
+    text_encoder_2 = T5EncoderModel.from_pretrained(
+        bfl_repo, 
+        subfolder="text_encoder_2", 
+        torch_dtype=torch_dtype,
+        local_files_only=True
+    )
+    transformer = FluxTransformer2DModel.from_pretrained(
+        bfl_repo, 
+        subfolder="transformer", 
+        torch_dtype=torch_dtype,
+        local_files_only=True
+    )
+    vae = AutoencoderKL.from_pretrained(
+        bfl_repo, 
+        subfolder="vae",
+        local_files_only=True
+    )
     
     pipe = FluxTryonPipeline.from_pretrained(
-        local_repo,
+        bfl_repo,
         transformer=transformer,
         text_encoder=text_encoder,
         text_encoder_2=text_encoder_2,
@@ -43,17 +105,72 @@ def load_models(device=device, torch_dtype=torch_dtype):
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
     
+    # Apply quantization (specifically for text_encoder_2 in this case)
+    quantize(pipe.text_encoder_2, weights=qfloat8)
+    freeze(pipe.text_encoder_2)  # Freeze model parameters for inference
+    
+    # Apply LoRA weights
     pipe.load_lora_weights(
         "loooooong/Any2anyTryon",
         weight_name="dev_lora_any2any_tryon.safetensors",
         adapter_name="tryon",
     )
+    
+    # Freeze other layers if necessary
+    freeze(pipe.text_encoder)
+    freeze(pipe.transformer)
+    freeze(pipe.vae)
+    
+    # Apply group offloading if requested
+    if group_offloading:
+        # Offload transformer, text encoder, and vae components to CPU for better memory management
+        apply_group_offloading(
+            pipe.transformer,
+            offload_type="leaf_level",
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.text_encoder, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.vae, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+    
+    # Save the compiled model for future use
+    try:
+        print(f"Saving compiled model to {serialized_model_path}")
+        torch.save(pipe, serialized_model_path)
+        print("Model successfully saved")
+    except Exception as e:
+        print(f"Failed to save compiled model: {e}")
+    
+    end_time.record()
+    torch.cuda.synchronize()
+    print(f"Model loading completed in {start_time.elapsed_time(end_time)/1000:.2f} seconds")
     return pipe
 
-# Load models at startup
-pipe = load_models()
+# Define input model using Pydantic for request validation
+class TryOnRequest(BaseModel):
+    user_image_base64: str
+    garment_image_base64: str
 
-def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
+# Define the generate_image function (with static watermark integration)
+def generate_image_with_watermark(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
+    global pipe
+    # Lazy load models if not already loaded
+    if pipe is None:
+        pipe = load_models()
+    
     height, width = int(height), int(width)
     width = width - (width % 16)
     height = height - (height % 16)
@@ -79,51 +196,70 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     image = np.concatenate([np.array(img) for img in concat_image_list], axis=1)
     image = Image.fromarray(image)
     
+    # Load static watermark image
+    watermark = Image.open(WATERMARK_IMAGE_PATH).convert("RGBA")
+    watermark = watermark.resize((int(image.width * 0.2), int(image.height * 0.2)))  # Resize watermark to 20% of the image size
+    watermark = watermark.convert("RGBA")
+    
+    # Position watermark at the bottom-right corner
+    image.paste(watermark, (image.width - watermark.width - 10, image.height - watermark.height - 10), watermark)
+    
     mask = np.zeros_like(np.array(image))
     mask[:, :width] = 255
     mask_image = Image.fromarray(mask)
     
-    output = pipe(
-        "",
-        image=image,
-        mask_image=mask_image,
-        strength=1.0,
-        height=height,
-        width=image.width,
-        target_width=width,
-        tryon=has_model_image and has_garment_image,
-        guidance_scale=guidance_scale,
-        num_inference_steps=num_inference_steps,
-        max_sequence_length=512,
-        generator=torch.Generator("cpu").manual_seed(seed),
-        output_type="pil",
-    ).images[0]
+    with torch.inference_mode():
+        output = pipe(
+            "",
+            image=image,
+            mask_image=mask_image,
+            strength=1.0,
+            height=height,
+            width=image.width,
+            target_width=width,
+            tryon=has_model_image and has_garment_image,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            max_sequence_length=512,
+            generator=torch.Generator("cpu").manual_seed(seed),
+            output_type="pil",
+        ).images[0]
     
     return output
-# Serve the frontend at root
 
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    with open("static/index.html", "r") as f:
-        return f.read()
+# Define the processing function (adapted for API)
+def process_images_standalone(user_image_base64: str, garment_image_base64: str):
+    try:
+        # Decode Base64 strings to images
+        user_image_data = base64.b64decode(user_image_base64)
+        garment_image_data = base64.b64decode(garment_image_base64)
+        
+        user_img = Image.open(io.BytesIO(user_image_data)).convert("RGBA")
+        garment_img = Image.open(io.BytesIO(garment_image_data)).convert("RGBA")
+        
+        # Convert to NumPy arrays
+        user_img_np = np.array(user_img)
+        garment_img_np = np.array(garment_img)
+        
+        # Generate the try-on image with watermark
+        output_image = generate_image_with_watermark(model_image=user_img_np, garment_image=garment_img_np)
+        
+        # Convert output image to Base64
+        output_buffer = io.BytesIO()
+        output_image.save(output_buffer, format="PNG")
+        output_base64 = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
+        
+        # Clean up to free memory
+        del user_img, garment_img, user_img_np, garment_img_np, output_image
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        return {"output_image": output_base64}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
-# Endpoint for virtual try-on
-@app.post("/try-on/")
-async def try_on(model_image: UploadFile = File(...), garment_image: UploadFile = File(...)):
-    # Read and process model image
-    model_image_data = await model_image.read()
-    model_image = Image.open(BytesIO(model_image_data))
-    model_image = np.array(model_image)
-    
-    # Read and process garment image
-    garment_image_data = await garment_image.read()
-    garment_image = Image.open(BytesIO(garment_image_data))
-    garment_image = np.array(garment_image)
-    
-    # Generate the try-on image
-    output_image = generate_image(model_image=model_image, garment_image=garment_image)
-    
-    # Save temporarily and return
-    output_path = "generated_image.png"
-    output_image.save(output_path)
-    return FileResponse(output_path)
+# Define the API endpoint
+@app.post("/try-on/", response_model=dict)
+async def try_on(request: TryOnRequest):
+    result = process_images_standalone(request.user_image_base64, request.garment_image_base64)
+    return result
