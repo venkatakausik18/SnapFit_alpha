@@ -263,3 +263,7 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
 async def try_on(request: TryOnRequest):
     result = process_images_standalone(request.user_image_base64, request.garment_image_base64)
     return result
+    
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings.", "status": "healthy"}
