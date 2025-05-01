@@ -1,86 +1,111 @@
 import torch
 import numpy as np
 from PIL import Image
+import argparse
 import os
-import base64
-import io
-from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
+
+from diffusers import FluxTransformer2DModel, FluxPipeline
 from transformers import T5EncoderModel, CLIPTextModel
-from diffusers import FluxTransformer2DModel, AutoencoderKL
+from diffusers import FluxInpaintPipeline, AutoencoderKL
+from diffusers.hooks import apply_group_offloading
+from src.pipeline_tryon import FluxTryonPipeline, crop_to_multiple_of_16, resize_and_pad_to_size, resize_by_height
 
-# Device and dtype setup
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch_dtype = torch.bfloat16
+def load_models(model_path, lora_name=None, device="cuda", torch_dtype=torch.bfloat16, group_offloading=False):
+    text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=torch_dtype)
+    text_encoder_2 = T5EncoderModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=torch_dtype)
+    transformer = FluxTransformer2DModel.from_pretrained(model_path, subfolder="transformer", torch_dtype=torch_dtype)
+    vae = AutoencoderKL.from_pretrained(model_path, subfolder="vae", torch_dtype=torch_dtype)
 
-def load_models(device=device, torch_dtype=torch_dtype):
-    bfl_repo = "black-forest-labs/FLUX.1-dev"
-    text_encoder = CLIPTextModel.from_pretrained(bfl_repo, subfolder="text_encoder", torch_dtype=torch_dtype)
-    text_encoder_2 = T5EncoderModel.from_pretrained(bfl_repo, subfolder="text_encoder_2", torch_dtype=torch_dtype)
-    transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer", torch_dtype=torch_dtype)
-    vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae")
-    
     pipe = FluxTryonPipeline.from_pretrained(
-        bfl_repo,
+        model_path,
         transformer=transformer,
         text_encoder=text_encoder,
         text_encoder_2=text_encoder_2,
         vae=vae,
         torch_dtype=torch_dtype,
-    ).to(device=device, dtype=torch_dtype)
-    
+    )
     pipe.enable_attention_slicing()
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
+
+    if lora_name is not None:
+        pipe.enable_model_cpu_offload()
+        pipe.load_lora_weights(
+            "loooooong/Any2anyTryon",
+            weight_name=lora_name,
+            adapter_name="tryon",
+        )
+        pipe.remove_all_hooks()
     
-    pipe.load_lora_weights(
-        "loooooong/Any2anyTryon",
-        weight_name="dev_lora_any2any_tryon.safetensors",
-        adapter_name="tryon",
-    )
+    if group_offloading:
+        # https://huggingface.co/docs/diffusers/main/en/api/pipelines/flux#group-offloading
+        apply_group_offloading(
+            pipe.transformer,
+            offload_type="leaf_level",
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.text_encoder, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.text_encoder_2, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.vae, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+    pipe.to(device=device)
     return pipe
 
-# Load models at startup
-pipe = load_models()
-
-def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
+@torch.no_grad()
+def generate_image(pipe, model_image_path, garment_image_path, prompt="", height=512, width=384, 
+                  seed=0, guidance_scale=3.5, num_inference_steps=30):
     height, width = int(height), int(width)
-    width = width - (width % 16)
+    width = width - (width % 16)  
     height = height - (height % 16)
-    
-    # Blank image with 3 channels (RGB)
-    concat_image_list = [np.zeros((height, width, 3), dtype=np.uint8)]
-    has_model_image = model_image is not None
-    has_garment_image = garment_image is not None
-    
+
+    concat_image_list = [Image.fromarray(np.zeros((height, width, 3), dtype=np.uint8))]
+    has_model_image = model_image_path is not None
+    has_garment_image = garment_image_path is not None
+
     if has_model_image:
-        # Convert RGBA to RGB if necessary
-        if model_image.shape[-1] == 4:  # Check if 4 channels (RGBA)
-            model_image = Image.fromarray(model_image, mode="RGBA").convert("RGB")
-            model_image = np.array(model_image)
-        model_image = resize_by_height(model_image, height)
+        model_image = Image.open(model_image_path)
+        if has_garment_image:
+            input_height, input_width = model_image.size[1], model_image.size[0]
+            model_image, lp, tp, rp, bp = resize_and_pad_to_size(model_image, width, height)
+        else:
+            model_image = resize_by_height(model_image, height)
         concat_image_list.append(model_image)
-    
+
     if has_garment_image:
-        # Convert RGBA to RGB if necessary
-        if garment_image.shape[-1] == 4:  # Check if 4 channels (RGBA)
-            garment_image = Image.fromarray(garment_image, mode="RGBA").convert("RGB")
-            garment_image = np.array(garment_image)
+        garment_image = Image.open(garment_image_path)
         garment_image = resize_by_height(garment_image, height)
         concat_image_list.append(garment_image)
-    
-    # Concatenate all RGB images
-    image = np.concatenate([np.array(img) for img in concat_image_list], axis=1)
-    image = Image.fromarray(image)
+
+    image = Image.fromarray(np.concatenate([np.array(img) for img in concat_image_list], axis=1))
     
     mask = np.zeros_like(np.array(image))
-    mask[:, :width] = 255
+    mask[:,:width] = 255
     mask_image = Image.fromarray(mask)
     
-    output = pipe(
-        "",  # Empty prompt
+    image = pipe(
+        prompt,
         image=image,
         mask_image=mask_image,
-        strength=1.0,
+        strength=1.,
         height=height,
         width=image.width,
         target_width=width,
@@ -92,73 +117,45 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
         output_type="pil",
     ).images[0]
     
-    return output
-
-def process_images_standalone(user_image_base64: str, garment_image_base64: str):
-    """
-    Process user and garment images for virtual try-on.
+    if has_model_image and has_garment_image:
+        image = image.crop((lp, tp, image.width-rp, image.height-bp)).resize((input_width, input_height))
     
-    Args:
-        user_image_base64: Base64 encoded string of the user image
-        garment_image_base64: Base64 encoded string of the garment image
-        
-    Returns:
-        Dictionary containing base64 encoded string of the output image
-        
-    Raises:
-        Exception: If any error occurs during processing
-    """
-    try:
-        # Decode Base64 strings to images
-        user_image_data = base64.b64decode(user_image_base64)
-        garment_image_data = base64.b64decode(garment_image_base64)
-        
-        # Load images as RGBA, then convert to NumPy arrays
-        user_img = Image.open(io.BytesIO(user_image_data)).convert("RGBA")
-        garment_img = Image.open(io.BytesIO(garment_image_data)).convert("RGBA")
-        
-        # Convert to NumPy arrays
-        user_img_np = np.array(user_img)
-        garment_img_np = np.array(garment_img)
-        
-        # Generate the try-on image
-        output_image = generate_image(model_image=user_img_np, garment_image=garment_img_np)
-        
-        # Convert output image to Base64
-        output_buffer = io.BytesIO()
-        output_image.save(output_buffer, format="PNG")
-        output_base64 = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
-        
-        return {"output_image": output_base64}
-    except Exception as e:
-        raise Exception(f"Error processing images: {str(e)}")
+    return image
 
-# Main block to handle file inputs
+def main():
+    parser = argparse.ArgumentParser(description='Virtual Try-on Image Generation')
+    parser.add_argument('--model_path', type=str, default="/workspace/check", help='Path to the model')
+    parser.add_argument('--lora_name', type=str, default="dev_lora_any2any_alltasks.safetensors", help='choose from dev_lora_any2any_alltasks.safetensors, dev_lora_any2any_tryon.safetensors and dev_lora_garment_reconstruction.safetensors')
+    parser.add_argument('--model_image', type=str, help='Path to the model image')
+    parser.add_argument('--garment_image', type=str, help='Path to the garment image')
+    parser.add_argument('--prompt', type=str, default="")
+    parser.add_argument('--height', type=int, default=576)
+    parser.add_argument('--width', type=int, default=576)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--guidance_scale', type=float, default=3.5)
+    parser.add_argument('--num_inference_steps', type=int, default=30)
+    parser.add_argument('--output_path', type=str, default='./results/output.png')
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--group_offloading', action="store_true")
+    
+    args = parser.parse_args()
+    
+    pipe = load_models(args.model_path, lora_name=args.lora_name, device=args.device,group_offloading=args.group_offloading)
+    
+    output_image = generate_image(
+        pipe=pipe,
+        model_image_path=args.model_image,
+        garment_image_path=args.garment_image,
+        prompt=args.prompt,
+        height=args.height,
+        width=args.width,
+        seed=args.seed,
+        guidance_scale=args.guidance_scale,
+        num_inference_steps=args.num_inference_steps
+    )
+    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
+    output_image.save(args.output_path)
+    print(f"Generated image saved to {args.output_path}")
+
 if __name__ == "__main__":
-    # Specify your input and output file paths here
-    user_image_path = "asset/images/model/model1.png"
-    garment_image_path = "asset/images/garment/garment1.jpg"
-    output_path = "results/output_model1.png"  # Updated to save in 'results' folder
-
-    try:
-        # Create the 'results' folder if it doesn't exist
-        os.makedirs("results", exist_ok=True)
-
-        # Read the image files and convert to base64
-        with open(user_image_path, "rb") as f:
-            user_image_base64 = base64.b64encode(f.read()).decode("utf-8")
-        with open(garment_image_path, "rb") as f:
-            garment_image_base64 = base64.b64encode(f.read()).decode("utf-8")
-
-        # Call the existing function with base64 inputs
-        result = process_images_standalone(user_image_base64, garment_image_base64)
-
-        # Decode the output base64 and save to file
-        output_bytes = base64.b64decode(result["output_image"])
-        with open(output_path, "wb") as f:
-            f.write(output_bytes)
-        print(f"Success! Output saved to {output_path}")
-    except FileNotFoundError as e:
-        print(f"File not found: {str(e)}")
-    except Exception as e:
-        print(f"Error: {str(e)}")
+    main()
