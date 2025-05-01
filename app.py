@@ -29,6 +29,9 @@ torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compa
 # Global pipeline variable - will be lazily loaded
 pipe = None
 
+# Static watermark image path
+WATERMARK_IMAGE_PATH = "asset/images/4[1].png"  # Path to the uploaded watermark image
+
 # Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype):
     print("Starting model loading process...")
@@ -125,8 +128,8 @@ class TryOnRequest(BaseModel):
     user_image_base64: str
     garment_image_base64: str
 
-# Define the generate_image function (unchanged from your code, with channel fix)
-def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
+# Define the generate_image function (with static watermark integration)
+def generate_image_with_watermark(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
     global pipe
     # Lazy load models if not already loaded
     if pipe is None:
@@ -156,6 +159,14 @@ def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=51
     
     image = np.concatenate([np.array(img) for img in concat_image_list], axis=1)
     image = Image.fromarray(image)
+    
+    # Load static watermark image
+    watermark = Image.open(WATERMARK_IMAGE_PATH).convert("RGBA")
+    watermark = watermark.resize((int(image.width * 0.2), int(image.height * 0.2)))  # Resize watermark to 20% of the image size
+    watermark = watermark.convert("RGBA")
+    
+    # Position watermark at the bottom-right corner
+    image.paste(watermark, (image.width - watermark.width - 10, image.height - watermark.height - 10), watermark)
     
     mask = np.zeros_like(np.array(image))
     mask[:, :width] = 255
@@ -198,10 +209,10 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         user_img_np = np.array(user_img)
         garment_img_np = np.array(garment_img)
         
-        # Generate the try-on image
+        # Generate the try-on image with watermark
         if start_time:
             print(f"Starting model inference at {time.time()}, {time.time() - start_time:.2f}s after start")
-        output_image = generate_image(model_image=user_img_np, garment_image=garment_img_np)
+        output_image = generate_image_with_watermark(model_image=user_img_np, garment_image=garment_img_np)
         if start_time:
             print(f"Model inference completed at {time.time()}, {time.time() - start_time:.2f}s after start")
         
@@ -223,9 +234,6 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         if start_time:
             print(f"Error during processing at {time.time()}, {time.time() - start_time:.2f}s after start: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
-
-# Add time module for timing
-import time
 
 # Define the API endpoint
 @app.post("/try-on/", response_model=dict)
