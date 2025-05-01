@@ -31,7 +31,7 @@ torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compa
 pipe = None
 
 # Static watermark image path
-WATERMARK_IMAGE_PATH = "/workspace/watermark.png"  # Path to the uploaded watermark image
+WATERMARK_IMAGE_PATH = "/workspace/mark.png"  # Path to the uploaded watermark image
 
 # Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype):
