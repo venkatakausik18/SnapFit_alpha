@@ -134,7 +134,7 @@ def main():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--guidance_scale', type=float, default=3.5)
     parser.add_argument('--num_inference_steps', type=int, default=30)
-    parser.add_argument('--output_path', type=str, default='./results/output.png')
+    parser.add_argument('--output_path', type=str, default='/workspace/output.png')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--group_offloading', action="store_true")
     
