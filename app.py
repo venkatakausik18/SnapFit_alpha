@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
+from optimum.quanto import freeze, qfloat8, quantize
+from diffusers.hooks import apply_group_offloading  # Import the group offloading function
 
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
@@ -23,6 +25,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compatibility
@@ -31,10 +34,11 @@ torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compa
 pipe = None
 
 # Static watermark image path
-WATERMARK_IMAGE_PATH = "/runpod-volume/mark.png"  # Path to the uploaded watermark image
+WATERMARK_IMAGE_PATH = "/workspace/mark.png"  # Path to the uploaded watermark image
 
 # Load models (runs once at startup)
-def load_models(device=device, torch_dtype=torch_dtype):
+def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
+    global pipe
     print("Starting model loading process...")
     start_time = import_time = torch.cuda.Event(enable_timing=True)
     end_time = torch.cuda.Event(enable_timing=True)
@@ -44,7 +48,7 @@ def load_models(device=device, torch_dtype=torch_dtype):
     torch.cuda.empty_cache()
     
     # Check if we have a serialized model
-    serialized_path = "/runpod-volume/serialized_models"  # Changed path
+    serialized_path = "/workspace/serialized_models"  # Changed path
     os.makedirs(serialized_path, exist_ok=True)
     serialized_model_path = f"{serialized_path}/compiled_pipe.pt"
     
@@ -62,9 +66,7 @@ def load_models(device=device, torch_dtype=torch_dtype):
     
     # Load from original checkpoints if serialized model isn't available
     print("Loading models from original checkpoints")
-    bfl_repo = "/runpod-volume/checkpoints"  # Changed path to match your environment
-    
-    # Rest of the function remains the same...
+    bfl_repo = "/workspace/checkpoints"  # Changed path to match your environment
     
     # Load models with optimization flags
     text_encoder = CLIPTextModel.from_pretrained(
@@ -104,13 +106,47 @@ def load_models(device=device, torch_dtype=torch_dtype):
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
     
+    # Apply quantization (specifically for text_encoder_2 in this case)
+    quantize(pipe.text_encoder_2, weights=qfloat8)
+    freeze(pipe.text_encoder_2)  # Freeze model parameters for inference
+    
+    # Apply LoRA weights
     pipe.load_lora_weights(
         "loooooong/Any2anyTryon",
-        weight_name="dev_lora_any2any_tryon.safetensors",
+        weight_name="dev_lora_any2any_alltasks.safetensors",
         adapter_name="tryon",
     )
     
-    # Freeze model parameters (no backpropagation needed for inference)
+    # Freeze other layers if necessary
+    freeze(pipe.text_encoder)
+    freeze(pipe.transformer)
+    freeze(pipe.vae)
+    
+    # Apply group offloading if requested
+    if group_offloading:
+        # Offload transformer, text encoder, and vae components to CPU for better memory management
+        apply_group_offloading(
+            pipe.transformer,
+            offload_type="leaf_level",
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.text_encoder, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+        apply_group_offloading(
+            pipe.vae, 
+            offload_device=torch.device("cpu"),
+            onload_device=torch.device(device),
+            offload_type="leaf_level",
+            use_stream=True,
+        )
+    
     # Save the compiled model for future use
     try:
         print(f"Saving compiled model to {serialized_model_path}")
@@ -194,10 +230,6 @@ def generate_image_with_watermark(model_image: np.ndarray, garment_image: np.nda
 
 # Define the processing function (adapted for API)
 def process_images_standalone(user_image_base64: str, garment_image_base64: str):
-    start_time = time.time() if 'time' in globals() else None
-    if start_time:
-        print(f"Starting image processing at {start_time}")
-    
     try:
         # Decode Base64 strings to images
         user_image_data = base64.b64decode(user_image_base64)
@@ -211,11 +243,7 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         garment_img_np = np.array(garment_img)
         
         # Generate the try-on image with watermark
-        if start_time:
-            print(f"Starting model inference at {time.time()}, {time.time() - start_time:.2f}s after start")
         output_image = generate_image_with_watermark(model_image=user_img_np, garment_image=garment_img_np)
-        if start_time:
-            print(f"Model inference completed at {time.time()}, {time.time() - start_time:.2f}s after start")
         
         # Convert output image to Base64
         output_buffer = io.BytesIO()
@@ -227,28 +255,13 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
         gc.collect()
         torch.cuda.empty_cache()
         
-        if start_time:
-            print(f"Processing completed at {time.time()}, total time: {time.time() - start_time:.2f}s")
-        
         return {"output_image": output_base64}
     except Exception as e:
-        if start_time:
-            print(f"Error during processing at {time.time()}, {time.time() - start_time:.2f}s after start: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
 # Define the API endpoint
 @app.post("/try-on/", response_model=dict)
 async def try_on(request: TryOnRequest):
-    """
-    Generate a virtual try-on image from base64-encoded user and garment images.
-    
-    Args:
-        request: JSON payload with user_image_base64 and garment_image_base64
-        
-    Returns:
-        JSON response with base64-encoded output image
-    """
-    print(f"Received try-on request at {time.time()}")
     result = process_images_standalone(request.user_image_base64, request.garment_image_base64)
     return result
 
