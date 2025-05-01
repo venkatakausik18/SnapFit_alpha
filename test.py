@@ -125,7 +125,7 @@ def generate_image(pipe, model_image_path, garment_image_path, prompt="", height
 def main():
     parser = argparse.ArgumentParser(description='Virtual Try-on Image Generation')
     parser.add_argument('--model_path', type=str, default="/workspace/checkpoints", help='Path to the model')
-    parser.add_argument('--lora_name', type=str, default="dev_lora_any2any_alltasks.safetensors", help='choose from dev_lora_any2any_alltasks.safetensors, dev_lora_any2any_tryon.safetensors and dev_lora_garment_reconstruction.safetensors')
+    parser.add_argument('--lora_name', type=str, default="dev_lora_any2any_tryon.safetensors", help='choose from dev_lora_any2any_alltasks.safetensors, dev_lora_any2any_tryon.safetensors and dev_lora_garment_reconstruction.safetensors')
     parser.add_argument('--model_image', type=str, help='Path to the model image')
     parser.add_argument('--garment_image', type=str, help='Path to the garment image')
     parser.add_argument('--prompt', type=str, default="")
