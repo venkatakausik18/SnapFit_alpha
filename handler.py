@@ -12,7 +12,7 @@ import os
 fastapi_process = None
 fastapi_port = 8000
 request_rate = 0
-models_loaded = False
+models_loaded = True
 
 def is_fastapi_app_ready():
     """Check if the FastAPI app is running and ready to accept connections."""
