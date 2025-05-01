@@ -34,7 +34,7 @@ torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compa
 pipe = None
 
 # Static watermark image path
-WATERMARK_IMAGE_PATH = "/runpod-volume/mark.png"  # Path to the uploaded watermark image
+WATERMARK_IMAGE_PATH = "/workspace/mark.png"  # Path to the uploaded watermark image
 
 # Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
@@ -47,7 +47,7 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     torch.cuda.empty_cache()
     
     # Check if we have a serialized model
-    serialized_path = "/runpod-volume/serialized_models"  # Changed path
+    serialized_path = "/workspace/serialized_models"  # Changed path
     os.makedirs(serialized_path, exist_ok=True)
     serialized_model_path = f"{serialized_path}/compiled_pipe.pt"
     
@@ -65,7 +65,7 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     
     # Load from original checkpoints if serialized model isn't available
     print("Loading models from original checkpoints")
-    bfl_repo = "/runpod-volume/checkpoints"  # Changed path to match your environment
+    bfl_repo = "/workspace/checkpoints"  # Changed path to match your environment
     
     # Load models with optimization flags
     text_encoder = CLIPTextModel.from_pretrained(
