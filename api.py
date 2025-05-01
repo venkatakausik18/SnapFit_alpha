@@ -38,6 +38,7 @@ WATERMARK_IMAGE_PATH = "/workspace/mark.png"  # Path to the uploaded watermark i
 
 # Load models (runs once at startup)
 def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
+    global pipe
     print("Starting model loading process...")
     start_time = import_time = torch.cuda.Event(enable_timing=True)
     end_time = torch.cuda.Event(enable_timing=True)
@@ -263,7 +264,8 @@ def process_images_standalone(user_image_base64: str, garment_image_base64: str)
 async def try_on(request: TryOnRequest):
     result = process_images_standalone(request.user_image_base64, request.garment_image_base64)
     return result
-    
+
+# Root endpoint for health checks
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Virtual Try-On API. Use POST /try-on/ with base64 image strings.", "status": "healthy"}
