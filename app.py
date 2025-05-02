@@ -17,6 +17,8 @@ from optimum.quanto import freeze, qfloat8, quantize
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
 
+os.environ['TORCH_CUDA_ARCH_LIST'] = '8.6'  # Set it to your GPU's compute capability
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for development
