@@ -12,15 +12,22 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install "uvicorn[standard]==0.29.0" "aiohttp==3.9.3"
 
-# Build the Quanto CUDA extension
-RUN cd /opt/conda/lib/python3.11/site-packages/optimum/quanto/library/extensions/cuda && \
-    python setup.py build
+# Check if the quanto directory exists and what files it contains
+RUN if [ -d "/opt/conda/lib/python3.11/site-packages/optimum/quanto" ]; then \
+    ls -la /opt/conda/lib/python3.11/site-packages/optimum/quanto; \
+    if [ -d "/opt/conda/lib/python3.11/site-packages/optimum/quanto/library/extensions/cuda" ]; then \
+    ls -la /opt/conda/lib/python3.11/site-packages/optimum/quanto/library/extensions/cuda; \
+    fi; \
+    fi
+
+# Install optimum with CUDA support
+RUN pip install --no-cache-dir optimum[cuda]
 
 COPY . .
 
 EXPOSE 8000
 
-# Verify CUDA is available and Quanto extension
+# Verify CUDA is available
 RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); import optimum.quanto"
 
 CMD ["python", "-u", "handler.py"]
