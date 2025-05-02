@@ -13,7 +13,6 @@ from src.pipeline_tryon import FluxTryonPipeline, resize_by_height
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
 from optimum.quanto import freeze, qfloat8, quantize
-from diffusers.hooks import apply_group_offloading  # Import the group offloading function
 
 # Initialize FastAPI app
 app = FastAPI(title="Virtual Try-On API")
@@ -28,16 +27,16 @@ app.add_middleware(
 
 # Device and dtype setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch_dtype = torch.float16  # Changed from bfloat16 to float16 for better compatibility
+torch_dtype = torch.bfloat16  # Changed from bfloat16 to float16 for better compatibility
 
 # Global pipeline variable - will be lazily loaded
 pipe = None
 
 # Static watermark image path
-WATERMARK_IMAGE_PATH = "/runpod-volume/mark.png"  # Path to the uploaded watermark image
+WATERMARK_IMAGE_PATH = "/workspace/mark.png"  # Path to the uploaded watermark image
 
 # Load models (runs once at startup)
-def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
+def load_models(device=device, torch_dtype=torch_dtype):
     global pipe
     print("Starting model loading process...")
     start_time = import_time = torch.cuda.Event(enable_timing=True)
@@ -48,7 +47,7 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     torch.cuda.empty_cache()
     
     # Check if we have a serialized model
-    serialized_path = "/runpod-volume/serialized_models"  # Changed path
+    serialized_path = "/workspace/serialized_models"  # Changed path
     os.makedirs(serialized_path, exist_ok=True)
     serialized_model_path = f"{serialized_path}/compiled_pipe.pt"
     
@@ -66,7 +65,7 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     
     # Load from original checkpoints if serialized model isn't available
     print("Loading models from original checkpoints")
-    bfl_repo = "/runpod-volume/checkpoints"  # Changed path to match your environment
+    bfl_repo = "/workspace/checkpoints"  # Changed path to match your environment
     
     # Load models with optimization flags
     text_encoder = CLIPTextModel.from_pretrained(
@@ -113,7 +112,7 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     # Apply LoRA weights
     pipe.load_lora_weights(
         "loooooong/Any2anyTryon",
-        weight_name="dev_lora_any2any_alltasks.safetensors",
+        weight_name="dev_lora_any2any_tryon.safetensors",
         adapter_name="tryon",
     )
     
@@ -121,31 +120,6 @@ def load_models(device=device, torch_dtype=torch_dtype, group_offloading=False):
     freeze(pipe.text_encoder)
     freeze(pipe.transformer)
     freeze(pipe.vae)
-    
-    # Apply group offloading if requested
-    if group_offloading:
-        # Offload transformer, text encoder, and vae components to CPU for better memory management
-        apply_group_offloading(
-            pipe.transformer,
-            offload_type="leaf_level",
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            use_stream=True,
-        )
-        apply_group_offloading(
-            pipe.text_encoder, 
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            offload_type="leaf_level",
-            use_stream=True,
-        )
-        apply_group_offloading(
-            pipe.vae, 
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            offload_type="leaf_level",
-            use_stream=True,
-        )
     
     # Save the compiled model for future use
     try:
