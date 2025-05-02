@@ -18,7 +18,7 @@ from optimum.quanto import freeze, qfloat8, quantize
 app = FastAPI(title="Virtual Try-On API")
 
 os.environ['TORCH_CUDA_ARCH_LIST'] = '8.6'  # Set it to your GPU's compute capability
-
+os.environ['CUDA_HOME'] = '/usr/local/cuda'  # Or try another common path
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for development
