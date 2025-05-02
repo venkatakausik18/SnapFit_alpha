@@ -1,8 +1,16 @@
 FROM pytorch/pytorch:2.5.0-cuda12.4-cudnn9-runtime
 
+# Set CUDA_HOME environment variable
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+
 RUN apt-get update && apt-get install -y \
     git libgl1 build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify CUDA installation path
+RUN ls -la ${CUDA_HOME} || echo "CUDA path not found"
 
 VOLUME /runpod-volume
 
@@ -12,14 +20,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install "uvicorn[standard]==0.29.0" "aiohttp==3.9.3"
 
-# Check if the quanto directory exists and what files it contains
-RUN if [ -d "/opt/conda/lib/python3.11/site-packages/optimum/quanto" ]; then \
-    ls -la /opt/conda/lib/python3.11/site-packages/optimum/quanto; \
-    if [ -d "/opt/conda/lib/python3.11/site-packages/optimum/quanto/library/extensions/cuda" ]; then \
-    ls -la /opt/conda/lib/python3.11/site-packages/optimum/quanto/library/extensions/cuda; \
-    fi; \
-    fi
-
 # Install optimum with CUDA support
 RUN pip install --no-cache-dir optimum[cuda]
 
@@ -27,7 +27,7 @@ COPY . .
 
 EXPOSE 8000
 
-# Verify CUDA is available
-RUN python -c "import torch; print('CUDA available:', torch.cuda.is_available()); import optimum.quanto"
+# Verify CUDA is available and environment variables are set
+RUN python -c "import torch; import os; print('CUDA available:', torch.cuda.is_available()); print('CUDA_HOME:', os.environ.get('CUDA_HOME')); import optimum.quanto"
 
 CMD ["python", "-u", "handler.py"]
