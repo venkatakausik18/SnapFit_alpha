@@ -61,7 +61,7 @@ class TryOnRequest(BaseModel):
     garment_image_base64: str
 
 # Define the generate_image function (unchanged from your code, with channel fix)
-def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=40):
+def generate_image(model_image: np.ndarray, garment_image: np.ndarray, height=512, width=384, seed=0, guidance_scale=3.5, num_inference_steps=30):
     height, width = int(height), int(width)
     width = width - (width % 16)
     height = height - (height % 16)
