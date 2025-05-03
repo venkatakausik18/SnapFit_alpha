@@ -47,7 +47,7 @@ def load_models(device=device, torch_dtype=torch_dtype):
     
     pipe.load_lora_weights(
         "loooooong/Any2anyTryon",
-        weight_name="dev_lora_any2any_tryon.safetensors",
+        weight_name="dev_lora_any2any_alltasks.safetensors",
         adapter_name="tryon",
     )
     return pipe
