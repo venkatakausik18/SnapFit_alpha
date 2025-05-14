@@ -7,10 +7,9 @@ import os
 from diffusers import FluxTransformer2DModel, FluxPipeline
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxInpaintPipeline, AutoencoderKL
-from diffusers.hooks import apply_group_offloading
 from src.pipeline_tryon import FluxTryonPipeline, crop_to_multiple_of_16, resize_and_pad_to_size, resize_by_height
 
-def load_models(model_path, lora_name=None, device="cuda", torch_dtype=torch.bfloat16, group_offloading=False):
+def load_models(model_path, lora_name=None, device="cuda", torch_dtype=torch.bfloat16):
     text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=torch_dtype)
     text_encoder_2 = T5EncoderModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=torch_dtype)
     transformer = FluxTransformer2DModel.from_pretrained(model_path, subfolder="transformer", torch_dtype=torch_dtype)
@@ -36,37 +35,6 @@ def load_models(model_path, lora_name=None, device="cuda", torch_dtype=torch.bfl
             adapter_name="tryon",
         )
         pipe.remove_all_hooks()
-    
-    if group_offloading:
-        # https://huggingface.co/docs/diffusers/main/en/api/pipelines/flux#group-offloading
-        apply_group_offloading(
-            pipe.transformer,
-            offload_type="leaf_level",
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            use_stream=True,
-        )
-        apply_group_offloading(
-            pipe.text_encoder, 
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            offload_type="leaf_level",
-            use_stream=True,
-        )
-        apply_group_offloading(
-            pipe.text_encoder_2, 
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            offload_type="leaf_level",
-            use_stream=True,
-        )
-        apply_group_offloading(
-            pipe.vae, 
-            offload_device=torch.device("cpu"),
-            onload_device=torch.device(device),
-            offload_type="leaf_level",
-            use_stream=True,
-        )
     pipe.to(device=device)
     return pipe
 
@@ -136,11 +104,10 @@ def main():
     parser.add_argument('--num_inference_steps', type=int, default=30)
     parser.add_argument('--output_path', type=str, default='./results/output.png')
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--group_offloading', action="store_true")
     
     args = parser.parse_args()
     
-    pipe = load_models(args.model_path, lora_name=args.lora_name, device=args.device,group_offloading=args.group_offloading)
+    pipe = load_models(args.model_path, lora_name=args.lora_name, device=args.device)
     
     output_image = generate_image(
         pipe=pipe,
