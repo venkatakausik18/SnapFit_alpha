@@ -124,7 +124,7 @@ def generate_image(pipe, model_image_path, garment_image_path, prompt="", height
 
 def main():
     parser = argparse.ArgumentParser(description='Virtual Try-on Image Generation')
-    parser.add_argument('--model_path', type=str, default="/workspace/checkpoints", help='Path to the model')
+    parser.add_argument('--model_path', type=str, default="/runpod-volume/checkpoints", help='Path to the model')
     parser.add_argument('--lora_name', type=str, default="dev_lora_any2any_alltasks.safetensors", help='choose from dev_lora_any2any_alltasks.safetensors, dev_lora_any2any_tryon.safetensors and dev_lora_garment_reconstruction.safetensors')
     parser.add_argument('--model_image', type=str, help='Path to the model image')
     parser.add_argument('--garment_image', type=str, help='Path to the garment image')
@@ -134,7 +134,7 @@ def main():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--guidance_scale', type=float, default=3.5)
     parser.add_argument('--num_inference_steps', type=int, default=30)
-    parser.add_argument('--output_path', type=str, default='/workspace/output.png')
+    parser.add_argument('--output_path', type=str, default='./results/output.png')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--group_offloading', action="store_true")
     
