@@ -7,6 +7,7 @@ import os
 from diffusers import FluxTransformer2DModel, FluxPipeline
 from transformers import T5EncoderModel, CLIPTextModel
 from diffusers import FluxInpaintPipeline, AutoencoderKL
+from diffusers.hooks import apply_group_offloading
 from src.pipeline_tryon import FluxTryonPipeline, crop_to_multiple_of_16, resize_and_pad_to_size, resize_by_height
 
 def load_models(model_path, lora_name=None, device="cuda", torch_dtype=torch.bfloat16):
@@ -102,7 +103,7 @@ def main():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--guidance_scale', type=float, default=3.5)
     parser.add_argument('--num_inference_steps', type=int, default=30)
-    parser.add_argument('--output_path', type=str, default='./output.png')
+    parser.add_argument('--output_path', type=str, default='./results/output.png')
     parser.add_argument('--device', type=str, default='cuda')
     
     args = parser.parse_args()
